@@ -4,15 +4,37 @@ A Blender script to procedurally generate 3D spaceships from a random seed.
 
 ![Spaceship screenshots](https://raw.githubusercontent.com/a1studmuffin/SpaceshipGenerator/master/screenshots/spaceships_grid.jpg)
 
-This fork
----------
-This is a fork of [Michael Davies's Spaceship Generator](https://github.com/a1studmuffin/SpaceshipGenerator), under the same MIT licence. What it changes:
+What this fork adds
+-------------------
+This is a fork of [Michael Davies's Spaceship Generator](https://github.com/a1studmuffin/SpaceshipGenerator), under the same MIT licence. It is maintained for Galaxy, a browser space game whose hulls it generates. The screenshot above is the original's.
 
-* It runs on Blender 4.2 and later, 5.x included.
+In the generator itself:
+
+* **Blender 4.2 to 5.x.** The API the original was written against is gone from current Blender; this runs on it as it is, add-on included.
+* **Bug fixes.** Equal minimum and maximum segment counts no longer raise; `assign_materials=False` no longer builds and loads the textured materials anyway; a darkened material colour keeps its alpha.
+* **Parameters for what was hard-coded** in `generate_spaceship()`: the hull's proportions, the length of a segment, how often an end face tapers, steps, tilts or is ribbed, how often a face grows an outgrowth, each kind of detail on or off, how deep a grid is cut, how thickly antennas stand, how many sides a round part has, how often the ship is mirrored. The comment above the function lists them all.
+* **Two new shapes**: a nose that closes to a point (`nose_taper`) and a floor on how slender the hull is (`min_slenderness`).
+* **Every ship with detail has an engine.** The original could leave one out: when no stern face was square enough to carry it, or when the only one stood on the half the mirror discarded.
 * The movie renderer and other unused code are gone.
-* What was hard-coded is a parameter of `generate_spaceship()`: the hull's proportions, how often a face tapers, steps, tilts or grows an outgrowth, each kind of detail, how thickly antennas stand, how round the round parts are, how often the ship is mirrored. Two shapes are new: a nose that closes to a point (`nose_taper`) and a floor on how slender the hull is (`min_slenderness`). The comment above the function lists them all.
-* A ship with detail always has an exhaust.
-* Every default is the value the original held and the random draws come in the same order: a seed draws the ship it drew, unless that ship had no exhaust.
+* Every default is the value the original held and the random draws come in the same order: a seed draws the ship it drew, unless that ship had no engine.
+
+### What the parameters do
+
+![Six rows of three ships: defaults, a tapered nose, a slender hull, always mirrored, no outgrowths, more outgrowths](docs/images/parameter-sweep.webp)
+
+Three seeds, one a column, and one change a row: the defaults, `nose_taper=0.7`, `min_slenderness=4`, `horizontal_symmetry_chance=1`, `create_asymmetry_segments=False`, `asymmetry_chance=0.45`. The fourth row matches the first because these three seeds were already mirrored. The labels are Galaxy's own names for the parameters and for its ship classes. These are Blender renders of the generator's mesh in Galaxy's flat paint, not in the generator's own materials.
+
+### In Galaxy
+
+The next two pictures are not what this add-on renders. They are the generator's meshes drawn in Galaxy's real-time shader (three.js, WebGL2), and the paint, chips, rust and dirt are that shader's. It reads masks that Galaxy bakes onto the mesh after generation — the distance to each sharp edge, how sheltered each point is, what each face is made of. That code lives in Galaxy, not in this repository. What comes from here is the shape.
+
+![Six generated hulls, twice: in flat paint above, in layered paint with chipped edges and rust below](docs/images/galaxy-before-after.webp)
+
+Six hulls from this fork, in Galaxy. Above, its earlier flat paint; below, its layered paint on the same meshes.
+
+![One hull in six finishes: grey, worn olive, clean white, graphite, two-tone sand, heavily rusted](docs/images/galaxy-six-looks.webp)
+
+One generated hull, six finishes, all from Galaxy's shader: the mesh is the same in each.
 
 Usage
 -----
