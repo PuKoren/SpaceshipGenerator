@@ -439,7 +439,8 @@ def create_materials():
 
     for material in Material:
         mat = bpy.data.materials.new(name=material.name)
-        mat.use_nodes = True
+        if bpy.app.version < (5, 0, 0):
+            mat.use_nodes = True  # every material has nodes from 5.0 on, and asking is deprecated
         ret.append(mat)
 
     # Choose a base color for the spaceship hull
@@ -540,7 +541,7 @@ def generate_spaceship(random_seed='',
     for face in bm.faces[:]:
         if abs(face.normal.x) > 0.5:
             hull_segment_length = uniform(0.3, 1)
-            num_hull_segments = randrange(num_hull_segments_min, num_hull_segments_max)
+            num_hull_segments = randrange(num_hull_segments_min, max(num_hull_segments_max, num_hull_segments_min + 1))
             hull_segment_range = range(num_hull_segments)
             for i in hull_segment_range:
                 is_last_hull_segment = i == hull_segment_range[-1]
@@ -594,7 +595,7 @@ def generate_spaceship(random_seed='',
                 continue
             if random() > 0.85:
                 hull_piece_length = uniform(0.1, 0.4)
-                for i in range(randrange(num_asymmetry_segments_min, num_asymmetry_segments_max)):
+                for i in range(randrange(num_asymmetry_segments_min, max(num_asymmetry_segments_max, num_asymmetry_segments_min + 1))):
                     face = extrude_face(bm, face, hull_piece_length)
 
                     # Maybe apply some scaling
@@ -717,13 +718,13 @@ def generate_spaceship(random_seed='',
         bevel_modifier.profile = 0.25
         bevel_modifier.limit_method = 'NONE'
 
-    # Add materials to the spaceship
+    # Add materials to the spaceship: the textured ones, or five empty slots that keep each face's material index
     me = ob.data
-    materials = create_materials()
-    for mat in materials:
-        if assign_materials:
+    if assign_materials:
+        for mat in create_materials():
             me.materials.append(mat)
-        else:
+    else:
+        for material in Material:
             me.materials.append(bpy.data.materials.new(name="Material"))
 
     return obj
