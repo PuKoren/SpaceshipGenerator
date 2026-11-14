@@ -14,7 +14,7 @@ import bpy
 import bmesh
 from math import sqrt, radians
 from mathutils import Vector, Matrix
-from random import random, seed, uniform, randint, randrange
+from random import random, seed, uniform, randint, randrange, getstate, setstate
 from enum import IntEnum
 from colorsys import hls_to_rgb
 
@@ -130,8 +130,15 @@ def add_exhaust_to_face(bm, face):
     if not face.is_valid:
         return
 
+    # A stern face is told by where it points; any other face a drive is put on, by pointing where it does
+    if is_rear_face(face):
+        is_exhaust_face = is_rear_face
+    else:
+        direction = face.normal.copy()
+        is_exhaust_face = lambda grid_face: grid_face.normal.dot(direction) > 0.95
+
     # The more square the face is, the more grid divisions it might have
-    num_cuts = randint(1, int(4 - get_aspect_ratio(face)))
+    num_cuts = randint(1, max(1, int(4 - get_aspect_ratio(face))))
     result = bmesh.ops.subdivide_edges(bm,
                                     edges=face.edges[:],
                                     cuts=num_cuts,
@@ -143,7 +150,7 @@ def add_exhaust_to_face(bm, face):
     scale_inner = 1 / uniform(1.05, 1.1)
     for face in result['geom']:
         if isinstance(face, bmesh.types.BMFace):
-            if is_rear_face(face):
+            if is_exhaust_face(face):
                 face.material_index = Material.hull_dark
                 face = extrude_face(bm, face, exhaust_length)
                 scale_face(bm, face, scale_outer, scale_outer, scale_outer)
@@ -768,6 +775,20 @@ def generate_spaceship(random_seed='',
     # Apply vertical symmetry sometimes - this can cause spaceship "islands", so disabled by default
     if allow_vertical_symmetry and random() > 1 - vertical_symmetry_chance:
         bmesh.ops.symmetrize(bm, input=bm.verts[:] + bm.edges[:] + bm.faces[:], direction="Z")
+
+    # Every dressed ship gets a drive. One can be missing: no stern face was square enough to be given
+    # one, or the only one stood on the half a mirror threw away. It then goes on the largest of the
+    # faces that point furthest aft, and on each of them alike where a mirror made two.
+    if create_face_detail and not any(face.material_index == Material.exhaust_burn for face in bm.faces):
+        faces = [face for face in bm.faces if face.is_valid and len(face.verts) == 4]
+        if faces:
+            aft = min(face.normal.x for face in faces)
+            rear = [face for face in faces if face.normal.x < aft + 0.05]
+            largest = max(face.calc_area() for face in rear)
+            state = getstate()
+            for face in [face for face in rear if face.calc_area() > largest * 0.999]:
+                setstate(state)
+                add_exhaust_to_face(bm, face)
 
     # Finish up, write the bmesh into a new mesh
     me = bpy.data.meshes.new('Mesh')
