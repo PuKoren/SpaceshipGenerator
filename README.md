@@ -4,10 +4,20 @@ A Blender script to procedurally generate 3D spaceships from a random seed.
 
 ![Spaceship screenshots](https://raw.githubusercontent.com/a1studmuffin/SpaceshipGenerator/master/screenshots/spaceships_grid.jpg)
 
+This fork
+---------
+This is a fork of [Michael Davies's Spaceship Generator](https://github.com/a1studmuffin/SpaceshipGenerator), under the same MIT licence. What it changes:
+
+* It runs on Blender 4.2 and later, 5.x included.
+* The movie renderer and other unused code are gone.
+* What was hard-coded is a parameter of `generate_spaceship()`: the hull's proportions, how often a face tapers, steps, tilts or grows an outgrowth, each kind of detail, how thickly antennas stand, how round the round parts are, how often the ship is mirrored. Two shapes are new: a nose that closes to a point (`nose_taper`) and a floor on how slender the hull is (`min_slenderness`). The comment above the function lists them all.
+* A ship with detail always has an exhaust.
+* Every default is the value the original held and the random draws come in the same order: a seed draws the ship it drew, unless that ship had no exhaust.
+
 Usage
 -----
-* Install Blender 2.80 or greater: http://blender.org/download/
-* Download newest `add_mesh_SpaceshipGenerator.zip` from the [Releases](https://github.com/a1studmuffin/SpaceshipGenerator/releases) section
+* Install Blender 4.2 or greater: http://blender.org/download/
+* Run `python build.py` in this folder to make `add_mesh_SpaceshipGenerator.zip`
 * Under Edit > Preferences... > Add-ons > Install... open the downloaded ZIP file
 * Under Edit > Preferences... > Add-ons enable the "Add Mesh: Spaceship Generator" script (search for "spaceship")
 * Add a spaceship in the 3D View under Add > Mesh > Spaceship

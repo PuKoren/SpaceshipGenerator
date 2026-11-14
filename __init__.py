@@ -1,12 +1,12 @@
 bl_info = {
     "name": "Spaceship Generator",
     "author": "Michael Davies",
-    "version": (1, 1, 3),
+    "version": (1, 2, 0),
     "blender": (4, 2, 0),
     "location": "View3D > Add > Mesh",
     "description": "Procedurally generate 3D spaceships from a random seed.",
-    "wiki_url": "https://github.com/a1studmuffin/SpaceshipGenerator/blob/master/README.md",
-    "tracker_url": "https://github.com/a1studmuffin/SpaceshipGenerator/issues",
+    "wiki_url": "https://github.com/PuKoren/SpaceshipGenerator/blob/master/README.md",
+    "tracker_url": "https://github.com/PuKoren/SpaceshipGenerator/issues",
     "category": "Add Mesh"
 }
 
@@ -18,7 +18,7 @@ else:
     from . import spaceship_generator
 
 import bpy
-from bpy.props import StringProperty, BoolProperty, IntProperty
+from bpy.props import StringProperty, BoolProperty, IntProperty, FloatProperty
 from bpy.types import Operator
 
 class GenerateSpaceship(Operator):
@@ -38,6 +38,12 @@ class GenerateSpaceship(Operator):
     allow_vertical_symmetry    : BoolProperty(default=False, name='Allow Vertical Symmetry')
     apply_bevel_modifier       : BoolProperty(default=True,  name='Apply Bevel Modifier')
     assign_materials           : BoolProperty(default=True,  name='Assign Materials')
+    nose_taper                 : FloatProperty(default=0, min=0, max=0.95, name='Nose Taper')
+    min_slenderness            : FloatProperty(default=0, min=0, soft_max=8, name='Min. Slenderness')
+    asymmetry_chance           : FloatProperty(default=0.15, min=0, max=1, name='Asymmetry Chance')
+    horizontal_symmetry_chance : FloatProperty(default=0.5, min=0, max=1, name='Horizontal Symmetry Chance')
+    antenna_density            : FloatProperty(default=0.1, min=0, max=1, name='Antenna Density')
+    create_weapons             : BoolProperty(default=True,  name='Create Weapons')
 
     def execute(self, context):
         spaceship_generator.generate_spaceship(
@@ -51,7 +57,13 @@ class GenerateSpaceship(Operator):
             self.allow_horizontal_symmetry,
             self.allow_vertical_symmetry,
             self.apply_bevel_modifier,
-            self.assign_materials)
+            self.assign_materials,
+            nose_taper=self.nose_taper,
+            min_slenderness=self.min_slenderness,
+            asymmetry_chance=self.asymmetry_chance,
+            horizontal_symmetry_chance=self.horizontal_symmetry_chance,
+            antenna_density=self.antenna_density,
+            create_weapons=self.create_weapons)
         return {'FINISHED'}
 
 def menu_func(self, context):
