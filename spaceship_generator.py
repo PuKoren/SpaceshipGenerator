@@ -8,13 +8,11 @@
 # https://github.com/a1studmuffin/SpaceshipGenerator
 #
 
-import sys
 import os
 import os.path
 import bpy
 import bmesh
-import datetime
-from math import sqrt, radians, pi, cos, sin
+from math import sqrt, radians
 from mathutils import Vector, Matrix
 from random import random, seed, uniform, randint, randrange
 from enum import IntEnum
@@ -699,14 +697,11 @@ def generate_spaceship(random_seed='',
     # Add the mesh to the scene
     scene = bpy.context.scene
     obj = bpy.data.objects.new('Spaceship', me)
-    # scene.objects.link(obj)
     scene.collection.objects.link(obj)
 
     # Select and make active
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)
-    # scene.objects.active = obj
-    # obj.select = True
 
     # Recenter the object to its center of mass
     bpy.ops.object.origin_set(type='ORIGIN_CENTER_OF_MASS')
@@ -725,7 +720,6 @@ def generate_spaceship(random_seed='',
     # Add materials to the spaceship
     me = ob.data
     materials = create_materials()
-    # materials = []
     for mat in materials:
         if assign_materials:
             me.materials.append(mat)
@@ -735,87 +729,14 @@ def generate_spaceship(random_seed='',
     return obj
 
 if __name__ == "__main__":
+    # Reset the scene, generate a single spaceship and focus on it
+    reset_scene()
+    customseed = '' # add anything here to generate the same spaceship
+    obj = generate_spaceship(customseed)
 
-    # When true, this script will generate a single spaceship in the scene.
-    # When false, this script will render multiple movie frames showcasing lots of ships.
-    generate_single_spaceship = True
-
-    if generate_single_spaceship:
-        # Reset the scene, generate a single spaceship and focus on it
-        reset_scene()
-        customseed = '' # add anything here to generate the same spaceship
-        obj = generate_spaceship(customseed)
-
-        # View the selected object in all views (there are none when Blender runs in the background)
-        screen = bpy.context.screen
-        for area in (screen.areas if screen else []):
-            if area.type == 'VIEW_3D':
-                with bpy.context.temp_override(area=area, region=area.regions[-1]):
-                    bpy.ops.view3d.view_selected()
-    else:
-        # Export a movie showcasing many different kinds of ships
-
-        # Settings
-        output_path = '' # leave empty to use script folder
-        total_movie_duration = 16
-        total_spaceship_duration = 1
-        yaw_rate = 45 # degrees/sec
-        yaw_offset = 220 # degrees/sec
-        camera_pole_rate = 1
-        camera_pole_pitch_min = 15 # degrees
-        camera_pole_pitch_max = 30 # degrees
-        camera_pole_pitch_offset = 0 # degrees
-        camera_pole_length = 10
-        camera_refocus_object_every_frame = False
-        fov = 60 # degrees
-        fps = 30
-        res_x = 1920
-        res_y = 1080
-
-        # Batch render the movie frames
-        inv_fps = 1/float(fps)
-        movie_duration = 0
-        spaceship_duration = total_spaceship_duration
-        scene = bpy.data.scenes["Scene"]
-        scene.render.resolution_x = res_x
-        scene.render.resolution_y = res_y
-        scene.camera.rotation_mode = 'XYZ'
-        scene.camera.data.angle = radians(fov)
-        frame = 0
-        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        while movie_duration < total_movie_duration:
-            movie_duration += inv_fps
-            spaceship_duration += inv_fps
-            if spaceship_duration >= total_spaceship_duration:
-                spaceship_duration -= total_spaceship_duration
-
-                # Generate a new spaceship
-                reset_scene()
-                obj = generate_spaceship()
-
-                # look for a mirror plane in the scene, and position it just underneath the ship if found
-                lowest_z = centre = min((Vector(b).z for b in obj.bound_box))
-                plane_obj = bpy.data.objects['Plane'] if 'Plane' in bpy.data.objects else None
-                if plane_obj:
-                    plane_obj.location.z = lowest_z - 0.3
-
-            # Position and orient the camera
-            rad = radians(yaw_offset + (yaw_rate * movie_duration))
-            camera_pole_pitch_lerp = 0.5 * (1 + cos(camera_pole_rate * movie_duration)) # 0-1
-            camera_pole_pitch = camera_pole_pitch_max * camera_pole_pitch_lerp + \
-                                camera_pole_pitch_min * (1 - camera_pole_pitch_lerp)
-            scene.camera.rotation_euler = (radians(90 - camera_pole_pitch + camera_pole_pitch_offset), 0, rad)
-            scene.camera.location = (sin(rad) * camera_pole_length,
-                                     cos(rad) * -camera_pole_length,
-                                     sin(radians(camera_pole_pitch))*camera_pole_length)
-            if camera_refocus_object_every_frame:
-                bpy.ops.view3d.camera_to_view_selected()
-
-            # Render the scene to disk
-            script_path = bpy.context.space_data.text.filepath if bpy.context.space_data else __file__
-            folder = output_path if output_path else os.path.split(os.path.realpath(script_path))[0]
-            filename = os.path.join('renders', timestamp, timestamp + '_' + str(frame).zfill(5) + '.png')
-            bpy.data.scenes['Scene'].render.filepath = os.path.join(folder, filename)
-            print('Rendering frame ' + str(frame) + '...')
-            bpy.ops.render.render(write_still=True)
-            frame += 1
+    # View the selected object in all views (there are none when Blender runs in the background)
+    screen = bpy.context.screen
+    for area in (screen.areas if screen else []):
+        if area.type == 'VIEW_3D':
+            with bpy.context.temp_override(area=area, region=area.regions[-1]):
+                bpy.ops.view3d.view_selected()
