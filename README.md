@@ -13,7 +13,7 @@ In the generator itself:
 * **Blender 4.2 to 5.x.** The API the original was written against is gone from current Blender; this runs on it as it is, add-on included.
 * **Bug fixes.** Equal minimum and maximum segment counts no longer raise; `assign_materials=False` no longer builds and loads the textured materials anyway; a darkened material colour keeps its alpha.
 * **Parameters for what was hard-coded** in `generate_spaceship()`: the hull's proportions, the length of a segment, how often an end face tapers, steps, tilts or is ribbed, how often a face grows an outgrowth, each kind of detail on or off, how deep a grid is cut, how thickly antennas stand, how many sides a round part has, how often the ship is mirrored. The comment above the function lists them all.
-* **Six silhouette-first archetypes:** `wedge` (the default), `fighter`, `freighter`, `saucer`, `spine`, `pod`. Lofted chamfered/rounded volumes, tapered wings, connected modules, recessed engine banks and a bridge/cockpit cue. Surface grids stay small; curved faces use angle-based smoothing. `wing_span`, `fuselage_roundness` and `taper` tune the forms. Every new archetype is bilaterally symmetric; vertical mirroring is optional.
+* **Six silhouette-first archetypes:** `wedge` (the default), `fighter`, `freighter`, `saucer`, `spine`, `pod`. Seeds vary primary proportions, module layouts, wings and engine banks, not just surface noise. Explicit canopies and command sections, stepped bridges, plating rails, ribs and intakes sit between the main silhouette and sparse fine grids. Curved faces use angle-based smoothing. `wing_span`, `fuselage_roundness` and `taper` tune the forms. Every new archetype is bilaterally symmetric; vertical mirroring is optional.
 * **The original extrusion route is `classic`**, with `nose_taper` and `min_slenderness` controls.
 * **Every ship with detail has an engine.** The original could leave one out: when no stern face was square enough to carry it, or when the only one stood on the half the mirror discarded.
 * The movie renderer and other unused code are gone.
@@ -28,7 +28,7 @@ Rows: wedge, fighter, freighter, saucer, spine, pod. Columns: seeds `galaxy-1` t
 
 ![The previous six shipped hulls above and their archetype replacements below](docs/images/archetype-before-after.webp)
 
-Top two rows: Galaxy's previous generated fleet. Bottom two rows: the rerolled fleet — starter/pod, miner/spine, hauler/freighter, frigate/fighter, destroyer/wedge, cruiser/wedge. Both use Galaxy's layered material. The new hero/fleet pairs total 550 kB, versus 1.30 MB before; all stay below 4,000/1,200 triangles, one draw call per hull.
+Top two rows: Galaxy's previous generated fleet. Bottom two rows: the rerolled fleet — starter/pod, miner/spine, hauler/freighter, frigate/fighter, destroyer/wedge, cruiser/wedge. Both use Galaxy's layered material. The new hero/fleet pairs total 653 kB, versus 1.30 MB before; all stay below 4,000/1,200 triangles, one draw call per hull.
 
 ### What the parameters do
 

@@ -150,12 +150,14 @@ def _ring_points(width, height, roundness, sides=8):
     return points
 
 def _bridge_rings(bm, rings):
+    faces = []
     for near, far in zip(rings, rings[1:]):
         count = len(near)
         for i in range(count):
-            bm.faces.new((near[i], far[i], far[(i + 1) % count], near[(i + 1) % count]))
-    bm.faces.new(rings[0])
-    bm.faces.new(tuple(reversed(rings[-1])))
+            faces.append(bm.faces.new((near[i], far[i], far[(i + 1) % count], near[(i + 1) % count])))
+    faces.append(bm.faces.new(rings[0]))
+    faces.append(bm.faces.new(tuple(reversed(rings[-1]))))
+    return faces
 
 def _loft(bm, sections, sides=8, shift=0.0):
     # A volume through cross-sections (x, half_width, half_height, lift,
@@ -164,7 +166,14 @@ def _loft(bm, sections, sides=8, shift=0.0):
     for x, width, height, lift, roundness in sections:
         points = _ring_points(width, height, roundness, sides)
         rings.append([bm.verts.new((x, shift + py, lift + pz)) for py, pz in points])
-    _bridge_rings(bm, rings)
+    return _bridge_rings(bm, rings)
+
+def _canopy(bm, sections):
+    faces = _loft(bm, sections)
+    for face in faces:
+        face.material_index = Material.hull_dark
+    roof, windshield = faces[1], faces[-2]
+    roof.material_index = windshield.material_index = Material.hull_lights
 
 def _disc(bm, sections, sides=12):
     # A volume stacked down Z through sections (z, radius_x, radius_y): a
@@ -203,11 +212,8 @@ def _engine_bell(bm, x, y, z, radius):
     for ring_x, scale in rows:
         points = _ring_points(radius * scale, radius * scale, 1.0)
         rings.append([bm.verts.new((ring_x, y + py, z + pz)) for py, pz in points])
-    before = len(bm.faces)
-    _bridge_rings(bm, rings)
-    bm.faces.ensure_lookup_table()
-    faces = bm.faces[:]
-    for face in faces[before:]:
+    faces = _bridge_rings(bm, rings)
+    for face in faces:
         face.material_index = Material.hull_dark
     faces[-1].material_index = Material.exhaust_burn
 
@@ -222,211 +228,485 @@ def _round_of(base, bias):
     return min(1.0, max(0.0, base + (bias - 0.5) * 0.6))
 
 def _build_wedge(bm, span_scale, round_bias):
-    # One flat arrowhead, a smaller wedge on its aft deck, a bridge slab, a
-    # row of drives across the stern.
-    length = uniform(2.8, 3.6)
+    # A variable arrowhead with a stepped bridge, deck tiers and flank trenches.
+    length = uniform(2.9, 3.9)
     nose, stern = length * 0.5, -length * 0.5
-    beam = length * uniform(0.23, 0.3) * (0.85 + 0.3 * span_scale)
-    depth = beam * uniform(0.3, 0.42)
-    r = _round_of(0.12, round_bias)
+    beam = length * uniform(0.18, 0.40) * (0.9 + 0.2 * span_scale)
+    hz = beam * uniform(0.10, 0.21)
+    r = _round_of(0.08, round_bias)
+    shoulder = uniform(0.42, 0.68)
+    shoulder_x = nose - length * shoulder
+    aft_w = uniform(0.86, 0.98)
+    deck_z = hz * 2.0
     _loft(bm, (
-        (nose, beam * 0.045, depth * 0.3, depth * 0.4, r),
-        (nose - length * 0.32, beam * 0.45, depth * 0.72, depth * 0.18, r),
-        (nose - length * 0.68, beam * 0.8, depth * 0.94, depth * 0.05, r),
-        (stern, beam, depth, 0.0, r),
+        (nose, beam * 0.05, hz * 0.16, hz * 0.16, r),
+        (nose - length * shoulder * 0.34, beam * 0.30, hz * 0.44, hz * 0.44, r),
+        (nose - length * shoulder * 0.70, beam * 0.62, hz * 0.76, hz * 0.76, r),
+        (shoulder_x, beam, hz, hz, r),
+        ((shoulder_x + stern) * 0.5, beam * (1.0 + aft_w) * 0.5, hz, hz, r),
+        (stern, beam * aft_w, hz * 0.86, hz * 1.14, r),
     ))
-    deck_nose = stern + length * uniform(0.38, 0.5)
-    _loft(bm, (
-        (deck_nose, beam * 0.1, depth * 0.32, depth * 0.95, r),
-        (stern + length * 0.08, beam * 0.4, depth * 0.6, depth * 1.1, r),
-    ))
-    bridge_x = stern + length * uniform(0.12, 0.18)
-    _loft(bm, (
-        (bridge_x, beam * 0.3, depth * 0.18, depth * 1.65, 0.1),
-        (bridge_x - length * 0.06, beam * 0.3, depth * 0.18, depth * 1.65, 0.1),
-    ))
-    count = randint(3, 5)
-    _engine_row(bm, stern, 0.0, count, min(depth * 0.62, beam * 1.3 / count), beam * 0.6)
-    return (bridge_x - length * 0.06, bridge_x + length * 0.02), Vector((1.0, 0.0, 0.15))
 
-def _build_fighter(bm, span_scale, round_bias):
-    # A slender fuselage with a canopy hump, swept wings, one or two drives.
-    length = uniform(3.0, 3.8)
-    nose, stern = length * 0.5, -length * 0.5
-    r = _round_of(0.65, round_bias)
-    w = length * uniform(0.055, 0.075)
-    h = w * uniform(0.9, 1.15)
-    _loft(bm, (
-        (nose, w * 0.2, h * 0.3, h * 0.1, r),
-        (nose - length * 0.26, w * 0.9, h * 0.85, h * 0.3, r),
-        (nose - length * 0.46, w, h * 1.2, h * 0.4, r),
-        (stern + length * 0.28, w, h, 0.0, r),
-        (stern, w * 0.75, h * 0.75, 0.0, r),
-    ))
-    span = length * (0.2 + 0.32 * span_scale)
-    _wings(bm, w * 0.6, span, length * 0.3, length * 0.12,
-           stern + length * 0.36, length * uniform(0.1, 0.22), 0.0,
-           span * uniform(0.02, 0.14), length * 0.011)
-    count = randint(1, 2)
-    _engine_row(bm, stern, 0.0, count, w * (0.6 if count == 1 else 0.45), w * 0.48)
-    return (nose - length * 0.5, nose - length * 0.18), Vector((0.5, 0.0, 0.85))
+    tower_fore = shoulder_x - length * uniform(0.01, 0.05)
+    tower_len = length * uniform(0.09, 0.14)
+    tower_aft = tower_fore - tower_len
+    deck_fore = tower_aft + tower_len * uniform(0.18, 0.30)
+    deck_aft = stern + length * 0.01
+    deck_span = deck_fore - deck_aft
+    tiers = randint(1, 3)
+    half = beam * uniform(0.24, 0.32)
+    half_wide = half
+    top = deck_z
+    for tier in range(tiers):
+        h = hz * uniform(0.16, 0.28)
+        _loft(bm, (
+            (deck_fore - deck_span * 0.18 * tier, half, h, top + h * 0.35, r),
+            (deck_aft + deck_span * 0.05 * tier, half * 0.94, h, top + h * 0.35, r),
+        ))
+        top += h * 1.35
+        half *= uniform(0.68, 0.84)
 
-def _build_freighter(bm, span_scale, round_bias):
-    # A cab, a thin spine, a train of uniform containers, an engine block.
-    length = uniform(3.2, 4.0)
-    nose, stern = length * 0.5, -length * 0.5
-    r = _round_of(0.1, round_bias)
-    w = length * uniform(0.08, 0.1)
-    h = w * uniform(0.9, 1.1)
-    cab_aft = nose - length * 0.2
+    base_h = max(hz * uniform(0.45, 0.72), (top - deck_z) / 1.35 + hz * uniform(0.18, 0.30))
+    base_hw = beam * uniform(0.18, 0.25)
     _loft(bm, (
-        (nose, w * 0.6, h * 0.6, h * 0.15, r),
-        (nose - length * 0.04, w * 0.95, h * 0.95, h * 0.05, r),
-        (cab_aft, w * 0.95, h * 0.95, 0.0, r),
+        (tower_fore, base_hw, base_h, deck_z + base_h * 0.35, r),
+        (tower_aft, base_hw * 0.94, base_h, deck_z + base_h * 0.35, r),
     ))
-    block_aft = stern + length * 0.16
-    _loft(bm, ((cab_aft + 0.01, w * 0.3, h * 0.32, 0.0, r), (block_aft, w * 0.3, h * 0.32, 0.0, r)))
-    count = randint(2, 4)
-    cw = w * uniform(1.15, 1.4) * (0.85 + 0.3 * span_scale)
-    ch = cw * uniform(0.85, 1.0)
-    room = (cab_aft - block_aft) * 0.94
-    gap = room * 0.06 / max(count - 1, 1)
-    each = (room - gap * (count - 1)) / count
-    first = cab_aft - (cab_aft - block_aft) * 0.03
-    for i in range(count):
-        x = first - i * (each + gap)
-        _loft(bm, ((x, cw, ch, 0.0, 0.05), (x - each, cw, ch, 0.0, 0.05)))
+    upper_h = hz * uniform(0.34, 0.52)
+    upper_hw = base_hw * uniform(0.62, 0.80)
+    upper_fore = tower_fore - tower_len * uniform(0.08, 0.16)
+    upper_aft = tower_aft + tower_len * uniform(0.10, 0.18)
+    upper_top = deck_z + base_h * 1.35
     _loft(bm, (
-        (block_aft, w * 1.02, h * 1.02, 0.0, r),
-        (stern, w * 0.9, h * 0.9, 0.0, r),
+        (upper_fore, upper_hw, upper_h, upper_top + upper_h * 0.35, r),
+        (upper_aft, upper_hw * 0.94, upper_h, upper_top + upper_h * 0.35, r),
     ))
-    _engine_row(bm, stern, 0.0, randint(2, 3), h * 0.42, w * 0.5)
-    return (nose - length * 0.06, nose + length * 0.02), Vector((0.8, 0.0, 0.55))
+    canopy_h = hz * uniform(0.20, 0.30)
+    canopy_lift = upper_top + upper_h * 1.35 + canopy_h * 0.5
+    _canopy(bm, (
+        (upper_fore - tower_len * 0.06, upper_hw * 0.80, canopy_h, canopy_lift, 0.35),
+        (upper_aft + tower_len * 0.14, upper_hw * 0.72, canopy_h, canopy_lift, 0.35),
+    ))
 
-def _build_saucer(bm, span_scale, round_bias):
-    # A lens-shaped disc, two mandibles forward, a cockpit bump, a stern
-    # engine block tucked under the rim.
-    radius = uniform(1.1, 1.4) * (0.85 + 0.3 * span_scale)
-    thick = radius * uniform(0.1, 0.14) * (0.8 + 0.4 * round_bias)
-    _disc(bm, (
-        (-thick, radius * 0.55, radius * 0.55),
-        (-thick * 0.35, radius, radius),
-        (thick * 0.35, radius, radius),
-        (thick, radius * 0.5, radius * 0.5),
-    ))
-    prong = radius * uniform(0.45, 0.6)
+    rail_x_fore = shoulder_x - length * 0.01
+    rail_x_aft = stern + length * 0.03
+    rail_hw = beam * uniform(0.024, 0.032)
+    rail_h = hz * uniform(0.10, 0.16)
+    strip_hw = beam * uniform(0.038, 0.052)
+    strip_h = rail_h * 0.5
+    rail_y = beam * 0.47
+    rail_lift = deck_z - rail_h * 0.20
+    strip_shift = max(rail_y - rail_hw * 0.85 - strip_hw, half_wide + strip_hw * 1.10)
+    strip_lift = deck_z - strip_h * 0.10
     for side in (1.0, -1.0):
         _loft(bm, (
-            (radius + prong, radius * 0.1, thick * 0.45, 0.0, 0.2),
-            (radius * 0.55, radius * 0.13, thick * 0.55, 0.0, 0.2),
-        ), shift=side * radius * 0.3)
-    _disc(bm, (
-        (thick * 0.3, radius * 0.22, radius * 0.22),
-        (thick * 1.05, radius * 0.13, radius * 0.13),
-    ), sides=8)
-    _loft(bm, (
-        (-radius * 0.72, radius * 0.4, thick * 0.55, 0.0, 0.3),
-        (-radius * 1.08, radius * 0.34, thick * 0.5, 0.0, 0.3),
-    ))
-    _engine_row(bm, -radius * 1.08, 0.0, randint(2, 3), thick * 0.5, radius * 0.22)
-    return (radius * 0.2, radius * 0.5), Vector((0.3, 0.0, 0.95))
+            (rail_x_fore, rail_hw, rail_h, rail_lift, 0.15),
+            (rail_x_aft, rail_hw, rail_h, rail_lift, 0.15),
+        ), shift=side * rail_y)
+        trench_faces = _loft(bm, (
+            (rail_x_fore, strip_hw, strip_h, strip_lift, 0.1),
+            (rail_x_aft, strip_hw, strip_h, strip_lift, 0.1),
+        ), shift=side * strip_shift)
+        for face in trench_faces:
+            face.material_index = Material.hull_dark
 
-def _build_spine(bm, span_scale, round_bias):
-    # A command pod, a long thin spine with mirrored tanks and modules hung
-    # along it, an engine block aft: a working ship.
-    length = uniform(3.4, 4.2)
+    _engine_row(bm, stern, hz * 1.12, randint(3, 4), hz * uniform(0.55, 0.75),
+                beam * aft_w * uniform(0.58, 0.72))
+
+def _build_fighter(bm, span_scale, round_bias):
+    # Swept or forward-swept wings, with canards, intakes or stern fairings.
+    length = uniform(3.0, 3.9)
     nose, stern = length * 0.5, -length * 0.5
-    r = _round_of(0.3, round_bias)
-    w = length * uniform(0.055, 0.07)
-    pod_aft = nose - length * 0.16
+    r = _round_of(0.72, round_bias)
+    w = length * uniform(0.050, 0.095)
+    h = w * uniform(0.85, 1.30)
     _loft(bm, (
-        (nose, w * 0.55, w * 0.55, 0.0, r),
-        (nose - length * 0.03, w, w * 0.9, 0.0, r),
-        (pod_aft, w * 0.9, w * 0.8, 0.0, r),
+        (nose, w * 0.18, h * 0.20, h * 0.14, r),
+        (nose - length * 0.14, w * 0.60, h * 0.58, h * 0.30, r),
+        (nose - length * 0.30, w * 0.95, h * 0.98, h * 0.36, r),
+        (nose - length * 0.55, w, h * 1.12, h * 0.30, r),
+        (stern + length * 0.24, w * 0.90, h * 1.00, h * 0.10, r),
+        (stern, w * 0.70, h * 0.70, 0.0, r),
     ))
-    block_fore = stern + length * 0.14
-    _loft(bm, ((pod_aft + 0.01, w * 0.26, w * 0.3, 0.0, 0.2), (block_fore, w * 0.26, w * 0.3, 0.0, 0.2)))
-    stations = randint(2, 3)
-    tank_r = w * uniform(0.5, 0.62)
-    offset = (w * 0.9 + tank_r) * (0.8 + 0.4 * span_scale)
-    room = pod_aft - block_fore
-    for i in range(stations):
-        x = pod_aft - room * (i + 0.5) / stations
-        tank_len = room / stations * uniform(0.5, 0.66)
-        _wings(bm, w * 0.1, offset - w * 0.1, tank_len * 0.32, tank_len * 0.24,
-               x, 0.0, 0.0, 0.0, w * 0.12)
+    canopy_fore = nose - length * uniform(0.32, 0.36)
+    canopy_aft = canopy_fore - length * uniform(0.10, 0.16)
+    canopy_h = h * uniform(0.20, 0.30)
+    _canopy(bm, (
+        (canopy_fore, w * 0.52, canopy_h, h * 1.32 + canopy_h * 0.5, 0.4),
+        (canopy_aft, w * 0.44, canopy_h, h * 1.32 + canopy_h * 0.5, 0.4),
+    ))
+
+    span = (length * uniform(0.26, 0.34) * uniform(0.65, 1.35)
+            * (0.9 + 0.2 * span_scale))
+    chord = length * uniform(0.18, 0.32)
+    tip_chord = chord * uniform(0.28, 0.62)
+    at_x = stern + length * uniform(0.26, 0.48)
+    sweep = length * uniform(-0.14, 0.28)
+    wing_lift = h * uniform(-0.05, 0.25)
+    thickness = length * uniform(0.008, 0.014)
+    _wings(bm, w * uniform(0.55, 0.85), span, chord, tip_chord, at_x, sweep,
+           wing_lift, span * uniform(-0.03, 0.16), thickness)
+
+    config = randint(0, 2)
+    if config == 0:
+        canard_span = span * uniform(0.22, 0.38)
+        _wings(bm, w * 0.45, canard_span, chord * uniform(0.20, 0.34),
+               chord * uniform(0.08, 0.16), nose - length * uniform(0.24, 0.32),
+               length * uniform(-0.02, 0.05), wing_lift,
+               canard_span * uniform(0.0, 0.10), thickness * 0.85)
+    elif config == 1:
+        intake_len = length * uniform(0.10, 0.16)
+        intake_hw = w * uniform(0.16, 0.26)
+        intake_h = h * uniform(0.30, 0.44)
+        intake_fore = at_x + chord * 0.30
         for side in (1.0, -1.0):
             _loft(bm, (
-                (x + tank_len * 0.5, tank_r * 0.7, tank_r * 0.7, 0.0, 1.0),
-                (x + tank_len * 0.3, tank_r, tank_r, 0.0, 1.0),
-                (x - tank_len * 0.3, tank_r, tank_r, 0.0, 1.0),
-                (x - tank_len * 0.5, tank_r * 0.7, tank_r * 0.7, 0.0, 1.0),
-            ), shift=side * offset)
-        if i % 2 == 0:
+                (intake_fore, intake_hw, intake_h, h * 0.04, 0.25),
+                (intake_fore - intake_len, intake_hw * 0.88, intake_h * 0.9, h * 0.04, 0.25),
+            ), shift=side * (w * 0.80 + intake_hw * 0.80))
+    else:
+        fair_len = length * uniform(0.20, 0.30)
+        fair_hw = w * uniform(0.18, 0.28)
+        fair_h = h * uniform(0.34, 0.50)
+        fair_aft = stern - length * 0.02
+        for side in (1.0, -1.0):
             _loft(bm, (
-                (x + tank_len * 0.4, w * 0.5, w * 0.55, -w * 0.7, 0.1),
-                (x - tank_len * 0.4, w * 0.5, w * 0.55, -w * 0.7, 0.1),
-            ))
+                (fair_aft + fair_len, fair_hw * 0.66, fair_h * 0.70, h * 0.06, 0.5),
+                (fair_aft + fair_len * 0.28, fair_hw, fair_h, h * 0.06, 0.5),
+                (fair_aft, fair_hw * 0.84, fair_h * 0.88, h * 0.06, 0.5),
+            ), shift=side * (w * 0.70 + fair_hw * 0.70))
+
+    if random() < 0.55:
+        fin_hw = w * uniform(0.07, 0.12)
+        _loft(bm, (
+            (nose - length * uniform(0.48, 0.56), fin_hw * 0.80, h * 0.40, h * 1.22, 0.1),
+            (stern + length * uniform(0.10, 0.18), fin_hw, h * 0.60, h * 1.30, 0.1),
+        ))
+
+    count = randint(1, 2)
+    _engine_row(bm, stern, h * 0.02, count, w * (0.62 if count == 1 else 0.44), w * 0.54)
+
+def _build_freighter(bm, span_scale, round_bias):
+    # Cargo modules on a continuous spine, with a raised forward bridge.
+    length = uniform(3.2, 4.6)
+    nose, stern = length * 0.5, -length * 0.5
+    r = _round_of(0.1, round_bias)
+    beam = 0.85 + 0.3 * span_scale
+    squat = randint(0, 1)
+    if squat:
+        w = length * uniform(0.108, 0.14) * beam
+        h = w * uniform(0.52, 0.72)
+    else:
+        w = length * uniform(0.058, 0.078) * beam
+        h = w * uniform(1.28, 1.75)
+    cab_aft = nose - length * uniform(0.16, 0.22)
     _loft(bm, (
-        (block_fore, w * 1.1, w * 1.05, 0.0, r),
-        (stern, w * 0.95, w * 0.9, 0.0, r),
+        (nose, w * 0.6, h * 0.62, h * 0.15, r),
+        (nose - length * 0.045, w, h, h * 0.05, r),
+        (cab_aft, w * 0.95, h * 0.93, 0.0, r),
     ))
-    _engine_row(bm, stern, 0.0, randint(2, 3), w * 0.5, w * 0.55)
-    return (nose - length * 0.05, nose + length * 0.02), Vector((0.8, 0.0, 0.55))
+    tower_fore = nose - length * uniform(0.055, 0.075)
+    tower_aft = max(tower_fore - length * uniform(0.07, 0.11), cab_aft + length * 0.005)
+    tower_len = tower_fore - tower_aft
+    tower_h = h * uniform(0.28, 0.42)
+    deck = h * 0.86
+    _loft(bm, (
+        (tower_fore, w * 0.44, tower_h, deck, 0.15),
+        (tower_aft, w * 0.5, tower_h, deck, 0.15),
+    ))
+    roof = deck + tower_h
+    ch = h * uniform(0.16, 0.26)
+    _canopy(bm, (
+        (tower_fore - tower_len * 0.1, w * 0.3, ch, roof + ch * 0.5, 0.12),
+        (tower_aft + tower_len * 0.12, w * 0.38, ch, roof + ch * 0.5, 0.12),
+    ))
+    block_fore = stern + length * uniform(0.13, 0.18)
+    block_len = block_fore - stern
+    _loft(bm, ((cab_aft + 0.01, w * 0.3, w * 0.3, 0.0, 0.2),
+               (block_fore, w * 0.3, w * 0.3, 0.0, 0.2)))
+    count = randint(2, 4)
+    room = cab_aft - block_fore
+    gap = room * uniform(0.03, 0.05)
+    weights = [uniform(0.75, 1.35) for _ in range(count)]
+    share = (room - gap * (count + 1)) / sum(weights)
+    cursor = cab_aft - gap
+    spans = []
+    girths = []
+    for i in range(count):
+        each = share * weights[i]
+        cw = w * uniform(1.15, 1.5) * beam
+        mh = cw * (uniform(0.5, 0.8) if squat else uniform(0.95, 1.4))
+        _loft(bm, ((cursor, cw, mh, 0.0, 0.06), (cursor - each, cw, mh, 0.0, 0.06)))
+        spans.append((cursor, cursor - each))
+        girths.append((cw, mh))
+        cursor -= each + gap
+    for i in range(min(count, randint(1, 2))):
+        cw, mh = girths[i]
+        fore, aft = spans[i]
+        cx = fore - (fore - aft) * 0.42
+        half = (fore - aft) * 0.11
+        _loft(bm, ((cx + half, cw * 1.07, mh * 1.07, 0.0, 0.06),
+                   (cx - half, cw * 1.07, mh * 1.07, 0.0, 0.06)))
+    if randint(0, 1):
+        fin_span = min(w * uniform(1.4, 2.4) * beam, length * 0.22)
+        fin_chord = block_len * uniform(0.45, 0.6)
+        _wings(bm, w * 0.72, fin_span, fin_chord, fin_chord * 0.62,
+               block_fore - block_len * uniform(0.5, 0.6),
+               fin_chord * uniform(0.2, 0.45), 0.0, 0.0, length * 0.007)
+    else:
+        housing_x = block_fore - block_len * uniform(0.25, 0.4)
+        housing_l = block_len * uniform(0.3, 0.45)
+        housing_w = w * uniform(0.3, 0.45)
+        housing_h = h * uniform(0.28, 0.42)
+        housing_z = h * uniform(0.3, 0.45)
+        for side in (1.0, -1.0):
+            _loft(bm, (
+                (housing_x, housing_w, housing_h, housing_z, 0.12),
+                (housing_x - housing_l, housing_w * 0.85, housing_h * 0.85, housing_z, 0.12),
+            ), shift=side * w * 0.95)
+    _loft(bm, (
+        (block_fore, w * 1.02, h * 1.02, 0.0, r),
+        (stern, w * 0.9, h * 0.9, 0.0, r),
+    ))
+    drives = randint(2, 4)
+    spread = w * (0.45 if drives == 2 else 0.5)
+    _engine_row(bm, stern, 0.0, drives, min(h * 0.62, spread * 0.85), spread)
+
+def _build_saucer(bm, span_scale, round_bias):
+    # An oval lens with paired mandibles and a raised glazed command module.
+    radius = uniform(1.05, 1.45) * (0.85 + 0.30 * span_scale)
+    thick = radius * uniform(0.09, 0.16) * (0.80 + 0.40 * round_bias)
+    rx = radius * uniform(0.92, 1.22)
+    ry = radius * uniform(0.70, 1.00)
+    top_h = thick * 0.85
+    _disc(bm, (
+        (-thick, rx * 0.52, ry * 0.52),
+        (-thick * 0.40, rx, ry),
+        (thick * 0.42, rx * 0.97, ry * 0.97),
+        (top_h, rx * 0.55, ry * 0.55),
+    ))
+
+    prong = rx * uniform(0.32, 0.70)
+    mand_y = ry * uniform(0.18, 0.42)
+    mand_hw = ry * uniform(0.07, 0.11)
+    mand_h = thick * uniform(0.30, 0.50)
+    for side in (1.0, -1.0):
+        _loft(bm, (
+            (rx + prong, mand_hw * 0.60, mand_h * 0.55, 0.0, 0.2),
+            (rx + prong * 0.55, mand_hw, mand_h * 0.88, 0.0, 0.2),
+            (rx * 0.80, mand_hw * 1.15, mand_h, 0.0, 0.2),
+        ), shift=side * mand_y)
+
+    cmd_h = thick * uniform(0.80, 1.30)
+    _disc(bm, (
+        (top_h - cmd_h * 0.55, rx * 0.34, ry * 0.34),
+        (top_h + cmd_h * 0.55, rx * 0.27, ry * 0.27),
+        (top_h + cmd_h, rx * 0.20, ry * 0.20),
+    ), sides=8)
+    canopy_h = cmd_h * uniform(0.40, 0.65)
+    canopy_lift = top_h + cmd_h + canopy_h * 0.5
+    _canopy(bm, (
+        (rx * 0.06, rx * 0.085, canopy_h, canopy_lift, 0.4),
+        (-rx * 0.10, rx * 0.080, canopy_h, canopy_lift, 0.4),
+    ))
+
+    plate_h = thick * uniform(0.22, 0.40)
+    plate_fore = -rx * uniform(0.18, 0.26)
+    plate_lift = top_h + plate_h * 0.30
+    if randint(0, 1) == 0:
+        plate_hw = ry * uniform(0.12, 0.16)
+        _loft(bm, (
+            (plate_fore, plate_hw, plate_h, plate_lift, 0.2),
+            (-rx * uniform(0.44, 0.52), plate_hw * 0.80, plate_h, plate_lift, 0.2),
+        ))
+    else:
+        plate_hw = ry * uniform(0.055, 0.085)
+        plate_aft = -rx * uniform(0.34, 0.42)
+        for side in (1.0, -1.0):
+            _loft(bm, (
+                (plate_fore, plate_hw, plate_h, plate_lift, 0.2),
+                (plate_aft, plate_hw * 0.85, plate_h, plate_lift, 0.2),
+            ), shift=side * plate_hw * 1.60)
+
+    vent_y = ry * uniform(0.28, 0.38)
+    vent_hw = ry * uniform(0.030, 0.050)
+    vent_h = thick * uniform(0.60, 1.00)
+    vent_fore = -rx * uniform(0.42, 0.52)
+    vent_aft = vent_fore - rx * uniform(0.16, 0.26)
+    for side in (1.0, -1.0):
+        _loft(bm, (
+            (vent_fore, vent_hw, vent_h * 0.55, thick * 0.30 + vent_h * 0.55, 0.15),
+            (vent_aft, vent_hw * 0.82, vent_h * 0.42, thick * 0.30 + vent_h * 0.42, 0.15),
+        ), shift=side * vent_y)
+
+    block_aft = -rx * uniform(1.00, 1.10)
+    block_hw = ry * uniform(0.34, 0.44)
+    block_h = thick * uniform(0.42, 0.55)
+    _loft(bm, (
+        (-rx * 0.70, block_hw, block_h, 0.0, 0.3),
+        (block_aft, block_hw * 0.86, block_h * 0.92, 0.0, 0.3),
+    ))
+    _engine_row(bm, block_aft, 0.0, randint(2, 4), thick * 0.42, block_hw * 0.55)
+
+def _build_spine(bm, span_scale, round_bias):
+    # Mixed tanks and cargo modules on struts off an exposed boom.
+    length = uniform(3.0, 4.6)
+    nose, stern = length * 0.5, -length * 0.5
+    r = _round_of(0.3, round_bias)
+    beam = 0.8 + 0.4 * span_scale
+    w = length * uniform(0.045, 0.072)
+    pod_scale = uniform(0.85, 1.35)
+    pod_aft = nose - length * uniform(0.13, 0.2)
+    _loft(bm, (
+        (nose, w * 0.5 * pod_scale, w * 0.5 * pod_scale, w * 0.08, r),
+        (nose - length * 0.035, w * pod_scale, w * 0.95 * pod_scale, w * 0.04, r),
+        (pod_aft, w * 0.9 * pod_scale, w * 0.82 * pod_scale, 0.0, r),
+    ))
+    pod_len = nose - pod_aft
+    ch = w * uniform(0.22, 0.3) * pod_scale
+    _canopy(bm, (
+        (nose - pod_len * 0.22, w * 0.34 * pod_scale, ch, w * 0.9 * pod_scale + ch * 0.5, 0.12),
+        (nose - pod_len * 0.62, w * 0.44 * pod_scale, ch, w * 0.9 * pod_scale + ch * 0.5, 0.12),
+    ))
+    block_fore = stern + length * uniform(0.12, 0.18)
+    block_len = block_fore - stern
+    bw = w * uniform(0.45, 0.62)
+    _loft(bm, ((pod_aft + length * 0.02, bw, bw * 1.08, 0.0, 0.2),
+               (block_fore, bw, bw * 1.08, 0.0, 0.2)))
+    stations = randint(2, 4)
+    step = (pod_aft - block_fore) / stations
+    for i in range(stations):
+        x = pod_aft - step * (i + 0.5)
+        reach = bw * uniform(0.8, 1.8) * beam
+        girth = uniform(0.85, 1.25)
+        span_len = step * uniform(0.5, 0.68)
+        if randint(0, 1):
+            tank_r = w * uniform(0.5, 0.75) * girth
+            offset = bw + reach + tank_r * 0.8
+            _wings(bm, bw * 0.6, offset - tank_r * 0.55 - bw * 0.6, span_len * 0.3, span_len * 0.22,
+                   x, 0.0, 0.0, 0.0, bw * 0.16)
+            for side in (1.0, -1.0):
+                _loft(bm, (
+                    (x + span_len * 0.5, tank_r * 0.72, tank_r * 0.72, 0.0, 1.0),
+                    (x + span_len * 0.28, tank_r, tank_r, 0.0, 1.0),
+                    (x - span_len * 0.28, tank_r, tank_r, 0.0, 1.0),
+                    (x - span_len * 0.5, tank_r * 0.72, tank_r * 0.72, 0.0, 1.0),
+                ), shift=side * offset)
+        else:
+            mod_w = w * uniform(0.45, 0.7) * girth
+            mod_h = mod_w * uniform(0.8, 1.4)
+            offset = bw + reach + mod_w * 0.85
+            _wings(bm, bw * 0.6, offset - mod_w * 0.55 - bw * 0.6, span_len * 0.26, span_len * 0.2,
+                   x, 0.0, 0.0, 0.0, bw * 0.15)
+            for side in (1.0, -1.0):
+                _loft(bm, ((x + span_len * 0.5, mod_w, mod_h, 0.0, 0.08),
+                           (x - span_len * 0.5, mod_w, mod_h, 0.0, 0.08)),
+                      shift=side * offset)
+    rad_span = w * uniform(1.8, 3.0) * beam
+    rad_chord = block_len * uniform(0.4, 0.55)
+    _wings(bm, bw, rad_span, rad_chord, rad_chord * 0.66,
+           block_fore - block_len * uniform(0.5, 0.62), rad_chord * uniform(0.1, 0.3),
+           0.0, rad_span * uniform(0.0, 0.1), length * 0.007)
+    _loft(bm, (
+        (block_fore, w * 1.05, w, 0.0, r),
+        (stern, w * 0.92, w * 0.86, 0.0, r),
+    ))
+    count = randint(2, 3)
+    spread = w * 0.45
+    _engine_row(bm, stern, 0.0, count, min(w * 0.5, spread * 0.95), spread)
 
 def _build_pod(bm, span_scale, round_bias):
-    # A short rounded tug with two big engine pods on struts.
-    length = uniform(2.0, 2.6)
+    # A raised command section and ribbed nacelles on straight or swept wings.
+    beam = 0.8 + 0.4 * span_scale
+    long_body = randint(0, 1)
+    if long_body:
+        length = uniform(2.7, 3.4)
+        w = length * uniform(0.085, 0.11) * beam
+        h = w * uniform(1.0, 1.3)
+        r = _round_of(0.6, round_bias)
+    else:
+        length = uniform(2.0, 2.5)
+        w = length * uniform(0.16, 0.2) * beam
+        h = w * uniform(0.72, 0.95)
+        r = _round_of(0.85, round_bias)
     nose, stern = length * 0.5, -length * 0.5
-    r = _round_of(0.8, round_bias)
-    w = length * uniform(0.13, 0.17)
-    h = w * uniform(0.85, 1.05)
     _loft(bm, (
         (nose, w * 0.42, h * 0.45, h * 0.12, r),
         (nose - length * 0.3, w, h, h * 0.08, r),
         (stern + length * 0.3, w * 0.95, h * 0.95, 0.0, r),
         (stern + length * 0.06, w * 0.6, h * 0.6, 0.0, r),
     ))
-    pod_r = w * uniform(0.5, 0.62)
-    offset = (w + pod_r * 1.3) * (0.75 + 0.5 * span_scale)
-    pod_fore = nose - length * 0.3
-    pod_aft = stern - length * 0.04
+    tower_fore = nose - length * uniform(0.1, 0.15)
+    tower_aft = tower_fore - length * uniform(0.14, 0.2)
+    tower_len = tower_fore - tower_aft
+    tower_h = h * uniform(0.3, 0.45)
+    deck = h * 0.82
+    _loft(bm, (
+        (tower_fore, w * 0.42, tower_h, deck, 0.15),
+        (tower_aft, w * 0.5, tower_h, deck, 0.15),
+    ))
+    ch = h * uniform(0.15, 0.22)
+    _canopy(bm, (
+        (tower_fore - tower_len * 0.08, w * 0.28, ch, deck + tower_h + ch * 0.5, 0.12),
+        (tower_aft + tower_len * 0.1, w * 0.36, ch, deck + tower_h + ch * 0.5, 0.12),
+    ))
+    for i in range(randint(1, 2)):
+        step_x = nose - length * uniform(0.22, 0.36)
+        step_l = length * uniform(0.06, 0.12)
+        step_w = w * uniform(0.2, 0.3)
+        step_h = h * uniform(0.2, 0.3)
+        step_z = h * uniform(0.25, 0.5)
+        for side in (1.0, -1.0):
+            _loft(bm, (
+                (step_x, step_w, step_h, step_z, 0.1),
+                (step_x - step_l, step_w * 0.9, step_h * 0.9, step_z, 0.1),
+            ), shift=side * w * 0.78)
+    pod_r = w * uniform(0.42, 0.68)
+    clearance = w * uniform(0.12, 0.45)
+    offset = w + clearance + pod_r * (1.0 + 0.4 * span_scale)
+    nac_fore = nose - length * uniform(0.3, 0.42)
+    nac_aft = stern - length * uniform(0.02, 0.12)
+    nac_len = nac_fore - nac_aft
+    nac_z = h * uniform(-0.05, 0.2)
     for side in (1.0, -1.0):
         _loft(bm, (
-            (pod_fore, pod_r * 0.55, pod_r * 0.55, 0.0, 1.0),
-            (pod_fore - length * 0.1, pod_r, pod_r, 0.0, 1.0),
-            (pod_aft + length * 0.1, pod_r, pod_r, 0.0, 1.0),
-            (pod_aft, pod_r * 0.85, pod_r * 0.85, 0.0, 1.0),
+            (nac_fore, pod_r * 0.5, pod_r * 0.5, nac_z, 1.0),
+            (nac_fore - length * 0.08, pod_r, pod_r, nac_z, 1.0),
+            (nac_aft + length * 0.08, pod_r, pod_r, nac_z, 1.0),
+            (nac_aft, pod_r * 0.88, pod_r * 0.88, nac_z, 1.0),
         ), shift=side * offset)
-    _wings(bm, w * 0.5, offset - w * 0.5, length * 0.16, length * 0.13,
-           (pod_fore + pod_aft) * 0.5, 0.0, 0.0, 0.0, length * 0.009)
+    swept = randint(0, 1)
+    sweep = length * uniform(0.05, 0.13) if swept else 0.0
+    _wings(bm, w * 0.5, offset - pod_r * 0.65 - w * 0.5,
+           length * uniform(0.13, 0.19), length * uniform(0.1, 0.15),
+           (nac_fore + nac_aft) * 0.5 + sweep, sweep, nac_z * 0.5, nac_z * 0.5,
+           length * uniform(0.009, 0.013))
+    bands = randint(2, 3)
+    for i in range(bands):
+        band_x = nac_fore - nac_len * (0.34 + 0.2 * i)
+        band_w = pod_r * 0.22
+        for side in (1.0, -1.0):
+            _loft(bm, (
+                (band_x + band_w, pod_r * 1.1, pod_r * 1.1, nac_z, 1.0),
+                (band_x - band_w, pod_r * 1.1, pod_r * 1.1, nac_z, 1.0),
+            ), shift=side * offset)
+    if randint(0, 1):
+        fin_x = nac_fore - nac_len * 0.55
+        fin_h = pod_r * uniform(0.5, 0.8)
+        for side in (1.0, -1.0):
+            _loft(bm, (
+                (fin_x + length * 0.035, pod_r * 0.18, fin_h * 0.5, nac_z + pod_r * 0.9, 0.1),
+                (fin_x - length * 0.035, pod_r * 0.12, fin_h * 0.32, nac_z + pod_r * 0.9, 0.1),
+            ), shift=side * offset)
     for side in (1.0, -1.0):
-        _engine_bell(bm, pod_aft, side * offset, 0.0, pod_r * 0.8)
-    return (nose - length * 0.26, nose + length * 0.02), Vector((0.5, 0.0, 0.85))
+        _engine_bell(bm, nac_aft, side * offset, nac_z, pod_r * 0.8)
 
 _BUILDERS = {'wedge': _build_wedge, 'fighter': _build_fighter, 'freighter': _build_freighter,
              'saucer': _build_saucer, 'spine': _build_spine, 'pod': _build_pod}
 
 def _build_archetype(bm, archetype, wing_span, fuselage_roundness):
-    # The primary and secondary forms of one archetype, normals made to point
-    # out, and the canopy cue: the largest face in the builder's window that
-    # looks the way a cockpit would gets the lit window band material.
-    window, facing = _BUILDERS[archetype](bm, min(max(wing_span, 0.0), 1.0), min(max(fuselage_roundness, 0.0), 1.0))
+    _BUILDERS[archetype](bm, min(max(wing_span, 0.0), 1.0), min(max(fuselage_roundness, 0.0), 1.0))
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
-    direction = facing.normalized()
-    canopy = None
-    for face in bm.faces:
-        centre = face.calc_center_median()
-        if window[0] <= centre.x <= window[1] and face.normal.dot(direction) > 0.6 and face.material_index == 0:
-            if canopy is None or face.calc_area() > canopy.calc_area():
-                canopy = face
-    if canopy is not None:
-        area = canopy.calc_area()
-        for face in bm.faces:
-            centre = face.calc_center_median()
-            if (window[0] <= centre.x <= window[1] and face.normal.dot(direction) > 0.6
-                    and abs(face.calc_area() - area) < area * 0.001 and face.material_index == 0):
-                face.material_index = Material.hull_lights
 
 # Given a face, splits it into a uniform grid and extrudes each grid face
 # out and back in again, making an exhaust shape.
