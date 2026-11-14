@@ -153,8 +153,9 @@ def add_exhaust_to_face(bm, face):
                     extruded_face.material_index = Material.exhaust_burn
                 scale_face(bm, face, scale_inner, scale_inner, scale_inner)
 
-# Given a face, splits it up into a smaller uniform grid and extrudes each grid cell.
-def add_grid_to_face(bm, face):
+# Given a face, splits it up into a smaller uniform grid and extrudes each grid cell
+# by a length drawn between the two values of depth.
+def add_grid_to_face(bm, face, depth=(0.025, 0.15)):
     if not face.is_valid:
         return
     result = bmesh.ops.subdivide_edges(bm,
@@ -163,7 +164,7 @@ def add_grid_to_face(bm, face):
                                     fractal=0.02,
                                     use_grid_fill=True,
                                     use_single_edge=False)
-    grid_length = uniform(0.025, 0.15)
+    grid_length = uniform(*depth)
     scale = 0.8
     for face in result['geom']:
         if isinstance(face, bmesh.types.BMFace):
@@ -176,12 +177,12 @@ def add_grid_to_face(bm, face):
             scale_face(bm, face, scale, scale, scale)
 
 # Given a face, adds some cylinders along it in a grid pattern.
-def add_cylinders_to_face(bm, face):
+def add_cylinders_to_face(bm, face, max_segments=32):
     if not face.is_valid or len(face.verts[:]) < 4:
         return
     horizontal_step = randint(1, 3)
     vertical_step = randint(1, 3)
-    num_segments = randint(6, 12)
+    num_segments = min(randint(6, 12), max_segments)
     face_width, face_height = get_face_width_and_height(face)
     cylinder_depth = 1.3 * min(face_width / (horizontal_step + 2),
                                face_height / (vertical_step + 2))
@@ -206,12 +207,12 @@ def add_cylinders_to_face(bm, face):
 
 # Given a face, adds some weapon turrets to it in a grid pattern.
 # Each turret will have a random orientation.
-def add_weapons_to_face(bm, face):
+def add_weapons_to_face(bm, face, max_segments=32):
     if not face.is_valid or len(face.verts[:]) < 4:
         return
     horizontal_step = randint(1, 2)
     vertical_step = randint(1, 2)
-    num_segments = 16
+    num_segments = min(16, max_segments)
     face_width, face_height = get_face_width_and_height(face)
     weapon_size = 0.5 * min(face_width / (horizontal_step + 2),
                             face_height / (vertical_step + 2))
@@ -270,7 +271,7 @@ def add_weapons_to_face(bm, face):
             bmesh.ops.create_cone(bm,
                                   cap_ends=True,
                                   cap_tris=False,
-                                  segments=8,
+                                  segments=min(8, max_segments),
                                   radius1=weapon_size * 0.4,
                                   radius2=weapon_size * 0.4,
                                   depth=weapon_depth * 5,
@@ -280,7 +281,7 @@ def add_weapons_to_face(bm, face):
             bmesh.ops.create_cone(bm,
                                   cap_ends=True,
                                   cap_tris=False,
-                                  segments=8,
+                                  segments=min(8, max_segments),
                                   radius1=weapon_size * 0.1,
                                   radius2=weapon_size * 0.1,
                                   depth=weapon_depth * 6,
@@ -289,7 +290,7 @@ def add_weapons_to_face(bm, face):
             bmesh.ops.create_cone(bm,
                                   cap_ends=True,
                                   cap_tris=False,
-                                  segments=8,
+                                  segments=min(8, max_segments),
                                   radius1=weapon_size * 0.1,
                                   radius2=weapon_size * 0.1,
                                   depth=weapon_depth * 6,
@@ -297,7 +298,7 @@ def add_weapons_to_face(bm, face):
                                          Matrix.Translation(Vector((weapon_size * -0.2, 0, -weapon_size))).to_4x4())
 
 # Given a face, adds a sphere on the surface, partially inset.
-def add_sphere_to_face(bm, face):
+def add_sphere_to_face(bm, face, subdivisions=3):
     if not face.is_valid:
         return
     face_width, face_height = get_face_width_and_height(face)
@@ -306,15 +307,16 @@ def add_sphere_to_face(bm, face):
                                     face.calc_center_bounds() - face.normal * \
                                     uniform(0, sphere_size * 0.5))
     result = bmesh.ops.create_icosphere(bm,
-                                        subdivisions=3,
+                                        subdivisions=subdivisions,
                                         radius=sphere_size,
                                         matrix=sphere_matrix)
     for vert in result['verts']:
         for face in vert.link_faces:
             face.material_index = Material.hull
 
-# Given a face, adds some pointy intimidating antennas.
-def add_surface_antenna_to_face(bm, face):
+# Given a face, adds some pointy intimidating antennas: density is the chance
+# that each point of a grid laid over the face carries one.
+def add_surface_antenna_to_face(bm, face, density=0.1, max_segments=32):
     if not face.is_valid or len(face.verts[:]) < 4:
         return
     horizontal_step = randint(4, 10)
@@ -325,7 +327,7 @@ def add_surface_antenna_to_face(bm, face):
         bottom = face.verts[3].co.lerp(
             face.verts[2].co, (h + 1) / float(horizontal_step + 1))
         for v in range(vertical_step):
-            if random() > 0.9:
+            if random() > 1 - density:
                 pos = top.lerp(bottom, (v + 1) / float(vertical_step + 1))
                 face_size = sqrt(face.calc_area())
                 depth = uniform(0.1, 1.5) * face_size
@@ -335,7 +337,7 @@ def add_surface_antenna_to_face(bm, face):
                 material_index = Material.hull if random() > 0.5 else Material.hull_dark
 
                 # Spire
-                num_segments = int(uniform(3, 6))
+                num_segments = min(int(uniform(3, 6)), max_segments)
                 result = bmesh.ops.create_cone(bm,
                                                cap_ends=False,
                                                cap_tris=False,
@@ -362,7 +364,7 @@ def add_surface_antenna_to_face(bm, face):
                         vert_face.material_index = material_index
 
 # Given a face, adds a glowing "landing pad" style disc.
-def add_disc_to_face(bm, face):
+def add_disc_to_face(bm, face, max_segments=32):
     if not face.is_valid:
         return
     face_width, face_height = get_face_width_and_height(face)
@@ -370,7 +372,7 @@ def add_disc_to_face(bm, face):
     bmesh.ops.create_cone(bm,
                           cap_ends=True,
                           cap_tris=False,
-                          segments=32,
+                          segments=min(32, max_segments),
                           radius1=depth * 3,
                           radius2=depth * 4,
                           depth=depth,
@@ -378,7 +380,7 @@ def add_disc_to_face(bm, face):
     result = bmesh.ops.create_cone(bm,
                                    cap_ends=False,
                                    cap_tris=False,
-                                   segments=32,
+                                   segments=min(32, max_segments),
                                    radius1=depth * 1.25,
                                    radius2=depth * 2.25,
                                    depth=0.0,
@@ -515,7 +517,35 @@ def create_materials():
 # Generates a textured spaceship mesh and returns the object.
 # Just uses global cube texture coordinates rather than generating UVs.
 # Takes an optional random seed value to generate a specific spaceship.
-# Allows overriding of some parameters that affect generation.
+#
+# Every other argument overrides one thing the generator decides, and every default is
+# what the generator has always done: a seed draws the same ship it always drew.
+#
+#   num_hull_segments_min/max       how many sections each end of the hull is extruded by
+#                                   (max is exclusive, as it always was; equal to min means exactly min)
+#   hull_scale_x/y/z                the starting block's length, width and height: (low, high)
+#   hull_segment_lengths            the length of one section: (low, high)
+#   hull_taper_chance               how often a section narrows or widens
+#   hull_step_chance                how often a section steps up or down
+#   hull_tilt_chance                how often a section tilts five degrees
+#   hull_ribbed_chance              how often a section is ribbed instead
+#   min_slenderness                 stretch the bare hull until it is at least this many times
+#                                   as long as it is wide or tall (0 leaves it alone)
+#   nose_taper                      draw the nose in towards a point: 0 none, 0.95 the most
+#   create_asymmetry_segments       grow blocks out of the hull's faces...
+#   asymmetry_chance                ...this often a face...
+#   num_asymmetry_segments_min/max  ...by this many sections (max exclusive)
+#   create_face_detail              dress the faces at all; then, kind by kind:
+#   create_grids, create_antennas, create_weapons, create_spheres, create_discs, create_cylinders
+#   grid_depth                      how far a grid's cells stand out: (low, high)
+#   antenna_density                 the chance of an antenna at each point of an antenna face
+#   max_round_segments              the most sides any round part is given
+#   sphere_subdivisions             how finely a sphere is divided
+#   allow_horizontal_symmetry       mirror the ship left to right...
+#   horizontal_symmetry_chance      ...this often (1 always)
+#   allow_vertical_symmetry, vertical_symmetry_chance   the same, top to bottom
+#   apply_bevel_modifier            add the broad bevel modifier
+#   assign_materials                build the textured materials; otherwise five empty slots
 def generate_spaceship(random_seed='',
                        num_hull_segments_min=3,
                        num_hull_segments_max=6,
@@ -526,27 +556,54 @@ def generate_spaceship(random_seed='',
                        allow_horizontal_symmetry=True,
                        allow_vertical_symmetry=False,
                        apply_bevel_modifier=True,
-                       assign_materials=True):
+                       assign_materials=True,
+                       *,
+                       hull_scale_x=(0.75, 2.0),
+                       hull_scale_y=(0.75, 2.0),
+                       hull_scale_z=(0.75, 2.0),
+                       hull_segment_lengths=(0.3, 1.0),
+                       hull_taper_chance=0.5,
+                       hull_step_chance=0.5,
+                       hull_tilt_chance=0.5,
+                       hull_ribbed_chance=0.1,
+                       min_slenderness=0.0,
+                       nose_taper=0.0,
+                       asymmetry_chance=0.15,
+                       create_grids=True,
+                       create_antennas=True,
+                       create_weapons=True,
+                       create_spheres=True,
+                       create_discs=True,
+                       create_cylinders=True,
+                       grid_depth=(0.025, 0.15),
+                       antenna_density=0.1,
+                       max_round_segments=32,
+                       sphere_subdivisions=3,
+                       horizontal_symmetry_chance=0.5,
+                       vertical_symmetry_chance=0.5):
     if random_seed:
         seed(random_seed)
+    max_round_segments = max(3, int(max_round_segments))
 
     # Let's start with a unit BMesh cube scaled randomly
     bm = bmesh.new()
     bmesh.ops.create_cube(bm, size=1)
     scale_vector = Vector(
-        (uniform(0.75, 2.0), uniform(0.75, 2.0), uniform(0.75, 2.0)))
+        (uniform(*hull_scale_x), uniform(*hull_scale_y), uniform(*hull_scale_z)))
     bmesh.ops.scale(bm, vec=scale_vector, verts=bm.verts)
 
     # Extrude out the hull along the X axis, adding some semi-random perturbations
+    nose_face = None
     for face in bm.faces[:]:
         if abs(face.normal.x) > 0.5:
-            hull_segment_length = uniform(0.3, 1)
+            is_nose = face.normal.x > 0
+            hull_segment_length = uniform(*hull_segment_lengths)
             num_hull_segments = randrange(num_hull_segments_min, max(num_hull_segments_max, num_hull_segments_min + 1))
             hull_segment_range = range(num_hull_segments)
             for i in hull_segment_range:
                 is_last_hull_segment = i == hull_segment_range[-1]
                 val = random()
-                if val > 0.1:
+                if val > hull_ribbed_chance:
                     # Most of the time, extrude out the face with some random deviations
                     face = extrude_face(bm, face, hull_segment_length)
                     if random() > 0.75:
@@ -554,7 +611,7 @@ def generate_spaceship(random_seed='',
                             bm, face, hull_segment_length * 0.25)
 
                     # Maybe apply some scaling
-                    if random() > 0.5:
+                    if random() > 1 - hull_taper_chance:
                         sy = uniform(1.2, 1.5)
                         sz = uniform(1.2, 1.5)
                         if is_last_hull_segment or random() > 0.5:
@@ -563,7 +620,7 @@ def generate_spaceship(random_seed='',
                         scale_face(bm, face, 1, sy, sz)
 
                     # Maybe apply some sideways translation
-                    if random() > 0.5:
+                    if random() > 1 - hull_step_chance:
                         sideways_translation = Vector(
                             (0, 0, uniform(0.1, 0.4) * scale_vector.z * hull_segment_length))
                         if random() > 0.5:
@@ -573,7 +630,7 @@ def generate_spaceship(random_seed='',
                                             verts=face.verts)
 
                     # Maybe add some rotation around Y axis
-                    if random() > 0.5:
+                    if random() > 1 - hull_tilt_chance:
                         angle = 5
                         if random() > 0.5:
                             angle = -angle
@@ -586,6 +643,22 @@ def generate_spaceship(random_seed='',
                     rib_scale = uniform(0.75, 0.95)
                     face = ribbed_extrude_face(
                         bm, face, hull_segment_length, randint(2, 4), rib_scale)
+            if is_nose:
+                nose_face = face
+
+    # Stretch a stubby hull along its length, before anything is built on it
+    if min_slenderness > 0:
+        low = [min(v.co[axis] for v in bm.verts) for axis in range(3)]
+        high = [max(v.co[axis] for v in bm.verts) for axis in range(3)]
+        length = high[0] - low[0]
+        wanted = min_slenderness * max(high[1] - low[1], high[2] - low[2])
+        if 0 < length < wanted:
+            bmesh.ops.scale(bm, vec=Vector((wanted / length, 1, 1)), verts=bm.verts)
+
+    # Draw the nose in towards a point
+    if nose_taper > 0 and nose_face is not None and nose_face.is_valid:
+        nose_scale = 1 - min(nose_taper, 0.95)
+        scale_face(bm, nose_face, nose_scale, nose_scale, nose_scale)
 
     # Add some large asymmetrical sections of the hull that stick out
     if create_asymmetry_segments:
@@ -593,7 +666,7 @@ def generate_spaceship(random_seed='',
             # Skip any long thin faces as it'll probably look stupid
             if get_aspect_ratio(face) > 4:
                 continue
-            if random() > 0.85:
+            if random() > 1 - asymmetry_chance:
                 hull_piece_length = uniform(0.1, 0.4)
                 for i in range(randrange(num_asymmetry_segments_min, max(num_asymmetry_segments_max, num_asymmetry_segments_min + 1))):
                     face = extrude_face(bm, face, hull_piece_length)
@@ -664,30 +737,36 @@ def generate_spaceship(random_seed='',
         for face in engine_faces:
             add_exhaust_to_face(bm, face)
 
-        for face in grid_faces:
-            add_grid_to_face(bm, face)
+        if create_grids:
+            for face in grid_faces:
+                add_grid_to_face(bm, face, grid_depth)
 
-        for face in antenna_faces:
-            add_surface_antenna_to_face(bm, face)
+        if create_antennas:
+            for face in antenna_faces:
+                add_surface_antenna_to_face(bm, face, antenna_density, max_round_segments)
 
-        for face in weapon_faces:
-            add_weapons_to_face(bm, face)
+        if create_weapons:
+            for face in weapon_faces:
+                add_weapons_to_face(bm, face, max_round_segments)
 
-        for face in sphere_faces:
-            add_sphere_to_face(bm, face)
+        if create_spheres:
+            for face in sphere_faces:
+                add_sphere_to_face(bm, face, sphere_subdivisions)
 
-        for face in disc_faces:
-            add_disc_to_face(bm, face)
+        if create_discs:
+            for face in disc_faces:
+                add_disc_to_face(bm, face, max_round_segments)
 
-        for face in cylinder_faces:
-            add_cylinders_to_face(bm, face)
+        if create_cylinders:
+            for face in cylinder_faces:
+                add_cylinders_to_face(bm, face, max_round_segments)
 
     # Apply horizontal symmetry sometimes
-    if allow_horizontal_symmetry and random() > 0.5:
+    if allow_horizontal_symmetry and random() > 1 - horizontal_symmetry_chance:
         bmesh.ops.symmetrize(bm, input=bm.verts[:] + bm.edges[:] + bm.faces[:], direction="Y")
 
     # Apply vertical symmetry sometimes - this can cause spaceship "islands", so disabled by default
-    if allow_vertical_symmetry and random() > 0.5:
+    if allow_vertical_symmetry and random() > 1 - vertical_symmetry_chance:
         bmesh.ops.symmetrize(bm, input=bm.verts[:] + bm.edges[:] + bm.faces[:], direction="Z")
 
     # Finish up, write the bmesh into a new mesh
