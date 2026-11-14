@@ -13,20 +13,32 @@ In the generator itself:
 * **Blender 4.2 to 5.x.** The API the original was written against is gone from current Blender; this runs on it as it is, add-on included.
 * **Bug fixes.** Equal minimum and maximum segment counts no longer raise; `assign_materials=False` no longer builds and loads the textured materials anyway; a darkened material colour keeps its alpha.
 * **Parameters for what was hard-coded** in `generate_spaceship()`: the hull's proportions, the length of a segment, how often an end face tapers, steps, tilts or is ribbed, how often a face grows an outgrowth, each kind of detail on or off, how deep a grid is cut, how thickly antennas stand, how many sides a round part has, how often the ship is mirrored. The comment above the function lists them all.
-* **Two new shapes**: a nose that closes to a point (`nose_taper`) and a floor on how slender the hull is (`min_slenderness`).
+* **Six silhouette-first archetypes:** `wedge` (the default), `fighter`, `freighter`, `saucer`, `spine`, `pod`. Lofted chamfered/rounded volumes, tapered wings, connected modules, recessed engine banks and a bridge/cockpit cue. Surface grids stay small; curved faces use angle-based smoothing. `wing_span`, `fuselage_roundness` and `taper` tune the forms. Every new archetype is bilaterally symmetric; vertical mirroring is optional.
+* **The original extrusion route is `classic`**, with `nose_taper` and `min_slenderness` controls.
 * **Every ship with detail has an engine.** The original could leave one out: when no stern face was square enough to carry it, or when the only one stood on the half the mirror discarded.
 * The movie renderer and other unused code are gone.
-* Every default is the value the original held and the random draws come in the same order: a seed draws the ship it drew, unless that ship had no engine.
+* Defaults intentionally changed: a seed now draws a symmetric wedge, not the old box chain. Select `archetype="classic"` for the original machinery; its horizontal mirror chance now defaults to 1.
+* Archetypes keep their engines even with surface detail disabled.
+
+### Silhouettes first
+
+![Six archetypes, each with four different seeds](docs/images/archetypes.webp)
+
+Rows: wedge, fighter, freighter, saucer, spine, pod. Columns: seeds `galaxy-1` through `galaxy-4`, neutral form controls. These are the generator's meshes in **Galaxy's real-time layered shader**, not the add-on's material. One primary form, a few secondary forms, then small detail. The inspiration is silhouette hierarchy — arrowheads, paired nacelles, discs — not copied franchise models.
+
+![The previous six shipped hulls above and their archetype replacements below](docs/images/archetype-before-after.webp)
+
+Top two rows: Galaxy's previous generated fleet. Bottom two rows: the rerolled fleet — starter/pod, miner/spine, hauler/freighter, frigate/fighter, destroyer/wedge, cruiser/wedge. Both use Galaxy's layered material. The new hero/fleet pairs total 550 kB, versus 1.30 MB before; all stay below 4,000/1,200 triangles, one draw call per hull.
 
 ### What the parameters do
 
 ![Six rows of three ships: defaults, a tapered nose, a slender hull, always mirrored, no outgrowths, more outgrowths](docs/images/parameter-sweep.webp)
 
-Three seeds, one a column, and one change a row: the defaults, `nose_taper=0.7`, `min_slenderness=4`, `horizontal_symmetry_chance=1`, `create_asymmetry_segments=False`, `asymmetry_chance=0.45`. The fourth row matches the first because these three seeds were already mirrored. The labels are Galaxy's own names for the parameters and for its ship classes. These are Blender renders of the generator's mesh in Galaxy's flat paint, not in the generator's own materials.
+Historical `classic` parameter sweep: three seeds, one per column; original defaults, `nose_taper=0.7`, `min_slenderness=4`, `horizontal_symmetry_chance=1`, `create_asymmetry_segments=False`, `asymmetry_chance=0.45`. The fourth row matches the first because these three seeds were already mirrored. The labels are Galaxy's parameter and class names. These are Blender renders in Galaxy's flat paint, not the add-on's materials.
 
 ### In Galaxy
 
-The next two pictures are not what this add-on renders. They are the generator's meshes drawn in Galaxy's real-time shader (three.js, WebGL2), and the paint, chips, rust and dirt are that shader's. It reads masks that Galaxy bakes onto the mesh after generation — the distance to each sharp edge, how sheltered each point is, what each face is made of. That code lives in Galaxy, not in this repository. What comes from here is the shape.
+The layered pictures are not what this add-on renders. They are the generator's meshes drawn in Galaxy's real-time shader (three.js, WebGL2); paint, chips, rust and dirt belong to that shader. It reads masks Galaxy bakes onto the mesh — sharp-edge distances, shelter and face zones. **`art/blender/skin.py` lives in Galaxy, not this repository.** This fork supplies the shape.
 
 ![Six generated hulls, twice: in flat paint above, in layered paint with chipped edges and rust below](docs/images/galaxy-before-after.webp)
 
@@ -48,6 +60,8 @@ Usage
 How it works
 ------------
 
+The animation below describes the original `classic` algorithm. New archetypes instead loft a dominant form, attach a few wings/modules and engine bells, add sparse small grids, and always mirror left/right.
+
 ![Step-by-step animation](https://raw.githubusercontent.com/a1studmuffin/SpaceshipGenerator/master/screenshots/step-by-step-animation.gif)
 
 Watch on YouTube: https://www.youtube.com/watch?v=xJZyXqJ6nog
@@ -56,7 +70,7 @@ Watch on YouTube: https://www.youtube.com/watch?v=xJZyXqJ6nog
 * Build the hull: Extrude the front/rear faces several times, adding random translation/scaling/rotation along the way.
 * Add asymmetry to the hull: Pick random faces and extrude them out in a similar manner, reducing in scale each time.
 * Add detail to the hull: Categorize each face by its orientation and generate details on it such as engines, antenna, weapon turrets, lights etc.
-* Sometimes apply horizontal symmetry.
+* Mirror horizontally (default; the chance can be changed for `classic` only).
 * Add a Bevel modifier to angularize the shape a bit.
 * Apply materials to the final result.
 * Take over the universe with your new infinite fleet of spaceships.

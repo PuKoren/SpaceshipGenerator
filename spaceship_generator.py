@@ -12,7 +12,7 @@ import os
 import os.path
 import bpy
 import bmesh
-from math import sqrt, radians
+from math import sqrt, radians, cos, sin
 from mathutils import Vector, Matrix
 from random import random, seed, uniform, randint, randrange, getstate, setstate
 from enum import IntEnum
@@ -124,6 +124,310 @@ def get_aspect_ratio(face):
 def is_rear_face(face):
     return face.normal.x < -0.95
 
+# Primary forms first; the classic face-detail pass remains available separately.
+
+ARCHETYPES = ('classic', 'wedge', 'fighter', 'freighter', 'saucer', 'spine', 'pod')
+
+
+def _ring_points(width, height, roundness, sides=8):
+    # A ring of half-extents `width` x `height`: at roundness 0 a crisply
+    # chamfered rectangle, at 1 an octagon of the ellipse. Other side counts
+    # always draw the ellipse.
+    points = []
+    flat = 1.0 / cos(radians(180.0 / sides))
+    blend = min(max(roundness, 0.0), 1.0)
+    for step in range(sides):
+        angle = radians(360.0 * (step + 0.5) / sides)
+        ca, sa = cos(angle), sin(angle)
+        px, py = ca * flat, sa * flat
+        if sides == 8:
+            if abs(ca) >= abs(sa):
+                bx, by = (1.0 if ca > 0 else -1.0), 0.7 * (1.0 if sa > 0 else -1.0)
+            else:
+                bx, by = 0.7 * (1.0 if ca > 0 else -1.0), (1.0 if sa > 0 else -1.0)
+            px, py = bx * (1.0 - blend) + px * blend, by * (1.0 - blend) + py * blend
+        points.append((px * width, py * height))
+    return points
+
+def _bridge_rings(bm, rings):
+    for near, far in zip(rings, rings[1:]):
+        count = len(near)
+        for i in range(count):
+            bm.faces.new((near[i], far[i], far[(i + 1) % count], near[(i + 1) % count]))
+    bm.faces.new(rings[0])
+    bm.faces.new(tuple(reversed(rings[-1])))
+
+def _loft(bm, sections, sides=8, shift=0.0):
+    # A volume through cross-sections (x, half_width, half_height, lift,
+    # roundness), nose first, capped at both ends, centred on y = `shift`.
+    rings = []
+    for x, width, height, lift, roundness in sections:
+        points = _ring_points(width, height, roundness, sides)
+        rings.append([bm.verts.new((x, shift + py, lift + pz)) for py, pz in points])
+    _bridge_rings(bm, rings)
+
+def _disc(bm, sections, sides=12):
+    # A volume stacked down Z through sections (z, radius_x, radius_y): a
+    # saucer's language.
+    rings = []
+    for z, radius_x, radius_y in sections:
+        points = _ring_points(radius_x, radius_y, 1.0, sides)
+        rings.append([bm.verts.new((px, py, z)) for px, py in points])
+    _bridge_rings(bm, rings)
+
+def _wings(bm, root, span, chord, tip_chord, at_x, sweep, lift, rise, thickness):
+    # A mirrored pair of thin tapered slabs, swept back by `sweep` and raised
+    # by `rise` at the tip.
+    for side in (1.0, -1.0):
+        rings = []
+        for y, half_chord, x, z in (
+            (side * root, chord * 0.5, at_x, lift),
+            (side * (root + span), tip_chord * 0.5, at_x - sweep, lift + rise),
+        ):
+            points = _ring_points(half_chord, thickness, 0.2)
+            rings.append([bm.verts.new((x + px, y, z + pz)) for px, pz in points])
+        _bridge_rings(bm, rings)
+
+def _engine_bell(bm, x, y, z, radius):
+    # A drive on the stern plane `x`, looking down -X: a bell proud of the
+    # hull, a rim, and a recessed throat whose floor wears the exhaust
+    # material — the shape the classic exhausts leave, so a reader of the
+    # mesh finds the same thing.
+    rows = (
+        (x + radius * 0.8, 1.0),
+        (x - radius * 0.55, 1.0),
+        (x - radius * 0.55, 0.72),
+        (x - radius * 0.12, 0.6),
+    )
+    rings = []
+    for ring_x, scale in rows:
+        points = _ring_points(radius * scale, radius * scale, 1.0)
+        rings.append([bm.verts.new((ring_x, y + py, z + pz)) for py, pz in points])
+    before = len(bm.faces)
+    _bridge_rings(bm, rings)
+    bm.faces.ensure_lookup_table()
+    faces = bm.faces[:]
+    for face in faces[before:]:
+        face.material_index = Material.hull_dark
+    faces[-1].material_index = Material.exhaust_burn
+
+def _engine_row(bm, x, z, count, radius, spread):
+    if count > 1:
+        radius = min(radius, spread / (count - 1) * 0.8)
+    for i in range(count):
+        y = 0.0 if count == 1 else spread * (2.0 * i / (count - 1) - 1.0)
+        _engine_bell(bm, x, y, z, radius)
+
+def _round_of(base, bias):
+    return min(1.0, max(0.0, base + (bias - 0.5) * 0.6))
+
+def _build_wedge(bm, span_scale, round_bias):
+    # One flat arrowhead, a smaller wedge on its aft deck, a bridge slab, a
+    # row of drives across the stern.
+    length = uniform(2.8, 3.6)
+    nose, stern = length * 0.5, -length * 0.5
+    beam = length * uniform(0.23, 0.3) * (0.85 + 0.3 * span_scale)
+    depth = beam * uniform(0.3, 0.42)
+    r = _round_of(0.12, round_bias)
+    _loft(bm, (
+        (nose, beam * 0.045, depth * 0.3, depth * 0.4, r),
+        (nose - length * 0.32, beam * 0.45, depth * 0.72, depth * 0.18, r),
+        (nose - length * 0.68, beam * 0.8, depth * 0.94, depth * 0.05, r),
+        (stern, beam, depth, 0.0, r),
+    ))
+    deck_nose = stern + length * uniform(0.38, 0.5)
+    _loft(bm, (
+        (deck_nose, beam * 0.1, depth * 0.32, depth * 0.95, r),
+        (stern + length * 0.08, beam * 0.4, depth * 0.6, depth * 1.1, r),
+    ))
+    bridge_x = stern + length * uniform(0.12, 0.18)
+    _loft(bm, (
+        (bridge_x, beam * 0.3, depth * 0.18, depth * 1.65, 0.1),
+        (bridge_x - length * 0.06, beam * 0.3, depth * 0.18, depth * 1.65, 0.1),
+    ))
+    count = randint(3, 5)
+    _engine_row(bm, stern, 0.0, count, min(depth * 0.62, beam * 1.3 / count), beam * 0.6)
+    return (bridge_x - length * 0.06, bridge_x + length * 0.02), Vector((1.0, 0.0, 0.15))
+
+def _build_fighter(bm, span_scale, round_bias):
+    # A slender fuselage with a canopy hump, swept wings, one or two drives.
+    length = uniform(3.0, 3.8)
+    nose, stern = length * 0.5, -length * 0.5
+    r = _round_of(0.65, round_bias)
+    w = length * uniform(0.055, 0.075)
+    h = w * uniform(0.9, 1.15)
+    _loft(bm, (
+        (nose, w * 0.2, h * 0.3, h * 0.1, r),
+        (nose - length * 0.26, w * 0.9, h * 0.85, h * 0.3, r),
+        (nose - length * 0.46, w, h * 1.2, h * 0.4, r),
+        (stern + length * 0.28, w, h, 0.0, r),
+        (stern, w * 0.75, h * 0.75, 0.0, r),
+    ))
+    span = length * (0.2 + 0.32 * span_scale)
+    _wings(bm, w * 0.6, span, length * 0.3, length * 0.12,
+           stern + length * 0.36, length * uniform(0.1, 0.22), 0.0,
+           span * uniform(0.02, 0.14), length * 0.011)
+    count = randint(1, 2)
+    _engine_row(bm, stern, 0.0, count, w * (0.6 if count == 1 else 0.45), w * 0.48)
+    return (nose - length * 0.5, nose - length * 0.18), Vector((0.5, 0.0, 0.85))
+
+def _build_freighter(bm, span_scale, round_bias):
+    # A cab, a thin spine, a train of uniform containers, an engine block.
+    length = uniform(3.2, 4.0)
+    nose, stern = length * 0.5, -length * 0.5
+    r = _round_of(0.1, round_bias)
+    w = length * uniform(0.08, 0.1)
+    h = w * uniform(0.9, 1.1)
+    cab_aft = nose - length * 0.2
+    _loft(bm, (
+        (nose, w * 0.6, h * 0.6, h * 0.15, r),
+        (nose - length * 0.04, w * 0.95, h * 0.95, h * 0.05, r),
+        (cab_aft, w * 0.95, h * 0.95, 0.0, r),
+    ))
+    block_aft = stern + length * 0.16
+    _loft(bm, ((cab_aft + 0.01, w * 0.3, h * 0.32, 0.0, r), (block_aft, w * 0.3, h * 0.32, 0.0, r)))
+    count = randint(2, 4)
+    cw = w * uniform(1.15, 1.4) * (0.85 + 0.3 * span_scale)
+    ch = cw * uniform(0.85, 1.0)
+    room = (cab_aft - block_aft) * 0.94
+    gap = room * 0.06 / max(count - 1, 1)
+    each = (room - gap * (count - 1)) / count
+    first = cab_aft - (cab_aft - block_aft) * 0.03
+    for i in range(count):
+        x = first - i * (each + gap)
+        _loft(bm, ((x, cw, ch, 0.0, 0.05), (x - each, cw, ch, 0.0, 0.05)))
+    _loft(bm, (
+        (block_aft, w * 1.02, h * 1.02, 0.0, r),
+        (stern, w * 0.9, h * 0.9, 0.0, r),
+    ))
+    _engine_row(bm, stern, 0.0, randint(2, 3), h * 0.42, w * 0.5)
+    return (nose - length * 0.06, nose + length * 0.02), Vector((0.8, 0.0, 0.55))
+
+def _build_saucer(bm, span_scale, round_bias):
+    # A lens-shaped disc, two mandibles forward, a cockpit bump, a stern
+    # engine block tucked under the rim.
+    radius = uniform(1.1, 1.4) * (0.85 + 0.3 * span_scale)
+    thick = radius * uniform(0.1, 0.14) * (0.8 + 0.4 * round_bias)
+    _disc(bm, (
+        (-thick, radius * 0.55, radius * 0.55),
+        (-thick * 0.35, radius, radius),
+        (thick * 0.35, radius, radius),
+        (thick, radius * 0.5, radius * 0.5),
+    ))
+    prong = radius * uniform(0.45, 0.6)
+    for side in (1.0, -1.0):
+        _loft(bm, (
+            (radius + prong, radius * 0.1, thick * 0.45, 0.0, 0.2),
+            (radius * 0.55, radius * 0.13, thick * 0.55, 0.0, 0.2),
+        ), shift=side * radius * 0.3)
+    _disc(bm, (
+        (thick * 0.3, radius * 0.22, radius * 0.22),
+        (thick * 1.05, radius * 0.13, radius * 0.13),
+    ), sides=8)
+    _loft(bm, (
+        (-radius * 0.72, radius * 0.4, thick * 0.55, 0.0, 0.3),
+        (-radius * 1.08, radius * 0.34, thick * 0.5, 0.0, 0.3),
+    ))
+    _engine_row(bm, -radius * 1.08, 0.0, randint(2, 3), thick * 0.5, radius * 0.22)
+    return (radius * 0.2, radius * 0.5), Vector((0.3, 0.0, 0.95))
+
+def _build_spine(bm, span_scale, round_bias):
+    # A command pod, a long thin spine with mirrored tanks and modules hung
+    # along it, an engine block aft: a working ship.
+    length = uniform(3.4, 4.2)
+    nose, stern = length * 0.5, -length * 0.5
+    r = _round_of(0.3, round_bias)
+    w = length * uniform(0.055, 0.07)
+    pod_aft = nose - length * 0.16
+    _loft(bm, (
+        (nose, w * 0.55, w * 0.55, 0.0, r),
+        (nose - length * 0.03, w, w * 0.9, 0.0, r),
+        (pod_aft, w * 0.9, w * 0.8, 0.0, r),
+    ))
+    block_fore = stern + length * 0.14
+    _loft(bm, ((pod_aft + 0.01, w * 0.26, w * 0.3, 0.0, 0.2), (block_fore, w * 0.26, w * 0.3, 0.0, 0.2)))
+    stations = randint(2, 3)
+    tank_r = w * uniform(0.5, 0.62)
+    offset = (w * 0.9 + tank_r) * (0.8 + 0.4 * span_scale)
+    room = pod_aft - block_fore
+    for i in range(stations):
+        x = pod_aft - room * (i + 0.5) / stations
+        tank_len = room / stations * uniform(0.5, 0.66)
+        _wings(bm, w * 0.1, offset - w * 0.1, tank_len * 0.32, tank_len * 0.24,
+               x, 0.0, 0.0, 0.0, w * 0.12)
+        for side in (1.0, -1.0):
+            _loft(bm, (
+                (x + tank_len * 0.5, tank_r * 0.7, tank_r * 0.7, 0.0, 1.0),
+                (x + tank_len * 0.3, tank_r, tank_r, 0.0, 1.0),
+                (x - tank_len * 0.3, tank_r, tank_r, 0.0, 1.0),
+                (x - tank_len * 0.5, tank_r * 0.7, tank_r * 0.7, 0.0, 1.0),
+            ), shift=side * offset)
+        if i % 2 == 0:
+            _loft(bm, (
+                (x + tank_len * 0.4, w * 0.5, w * 0.55, -w * 0.7, 0.1),
+                (x - tank_len * 0.4, w * 0.5, w * 0.55, -w * 0.7, 0.1),
+            ))
+    _loft(bm, (
+        (block_fore, w * 1.1, w * 1.05, 0.0, r),
+        (stern, w * 0.95, w * 0.9, 0.0, r),
+    ))
+    _engine_row(bm, stern, 0.0, randint(2, 3), w * 0.5, w * 0.55)
+    return (nose - length * 0.05, nose + length * 0.02), Vector((0.8, 0.0, 0.55))
+
+def _build_pod(bm, span_scale, round_bias):
+    # A short rounded tug with two big engine pods on struts.
+    length = uniform(2.0, 2.6)
+    nose, stern = length * 0.5, -length * 0.5
+    r = _round_of(0.8, round_bias)
+    w = length * uniform(0.13, 0.17)
+    h = w * uniform(0.85, 1.05)
+    _loft(bm, (
+        (nose, w * 0.42, h * 0.45, h * 0.12, r),
+        (nose - length * 0.3, w, h, h * 0.08, r),
+        (stern + length * 0.3, w * 0.95, h * 0.95, 0.0, r),
+        (stern + length * 0.06, w * 0.6, h * 0.6, 0.0, r),
+    ))
+    pod_r = w * uniform(0.5, 0.62)
+    offset = (w + pod_r * 1.3) * (0.75 + 0.5 * span_scale)
+    pod_fore = nose - length * 0.3
+    pod_aft = stern - length * 0.04
+    for side in (1.0, -1.0):
+        _loft(bm, (
+            (pod_fore, pod_r * 0.55, pod_r * 0.55, 0.0, 1.0),
+            (pod_fore - length * 0.1, pod_r, pod_r, 0.0, 1.0),
+            (pod_aft + length * 0.1, pod_r, pod_r, 0.0, 1.0),
+            (pod_aft, pod_r * 0.85, pod_r * 0.85, 0.0, 1.0),
+        ), shift=side * offset)
+    _wings(bm, w * 0.5, offset - w * 0.5, length * 0.16, length * 0.13,
+           (pod_fore + pod_aft) * 0.5, 0.0, 0.0, 0.0, length * 0.009)
+    for side in (1.0, -1.0):
+        _engine_bell(bm, pod_aft, side * offset, 0.0, pod_r * 0.8)
+    return (nose - length * 0.26, nose + length * 0.02), Vector((0.5, 0.0, 0.85))
+
+_BUILDERS = {'wedge': _build_wedge, 'fighter': _build_fighter, 'freighter': _build_freighter,
+             'saucer': _build_saucer, 'spine': _build_spine, 'pod': _build_pod}
+
+def _build_archetype(bm, archetype, wing_span, fuselage_roundness):
+    # The primary and secondary forms of one archetype, normals made to point
+    # out, and the canopy cue: the largest face in the builder's window that
+    # looks the way a cockpit would gets the lit window band material.
+    window, facing = _BUILDERS[archetype](bm, min(max(wing_span, 0.0), 1.0), min(max(fuselage_roundness, 0.0), 1.0))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    direction = facing.normalized()
+    canopy = None
+    for face in bm.faces:
+        centre = face.calc_center_median()
+        if window[0] <= centre.x <= window[1] and face.normal.dot(direction) > 0.6 and face.material_index == 0:
+            if canopy is None or face.calc_area() > canopy.calc_area():
+                canopy = face
+    if canopy is not None:
+        area = canopy.calc_area()
+        for face in bm.faces:
+            centre = face.calc_center_median()
+            if (window[0] <= centre.x <= window[1] and face.normal.dot(direction) > 0.6
+                    and abs(face.calc_area() - area) < area * 0.001 and face.material_index == 0):
+                face.material_index = Material.hull_lights
+
 # Given a face, splits it into a uniform grid and extrudes each grid face
 # out and back in again, making an exhaust shape.
 def add_exhaust_to_face(bm, face):
@@ -162,13 +466,13 @@ def add_exhaust_to_face(bm, face):
 
 # Given a face, splits it up into a smaller uniform grid and extrudes each grid cell
 # by a length drawn between the two values of depth.
-def add_grid_to_face(bm, face, depth=(0.025, 0.15)):
+def add_grid_to_face(bm, face, depth=(0.025, 0.15), cuts=None, fractal=0.02):
     if not face.is_valid:
         return
     result = bmesh.ops.subdivide_edges(bm,
                                     edges=face.edges[:],
-                                    cuts=randint(2, 4),
-                                    fractal=0.02,
+                                    cuts=randint(2, 4) if cuts is None else cuts,
+                                    fractal=fractal,
                                     use_grid_fill=True,
                                     use_single_edge=False)
     grid_length = uniform(*depth)
@@ -525,9 +829,13 @@ def create_materials():
 # Just uses global cube texture coordinates rather than generating UVs.
 # Takes an optional random seed value to generate a specific spaceship.
 #
-# Every other argument overrides one thing the generator decides, and every default is
-# what the generator has always done: a seed draws the same ship it always drew.
+# The default is a symmetric wedge. `classic` selects the original extrusion machinery.
+# Archetypes use one primary form, attached secondary forms and sparse surface detail.
 #
+#   archetype                      wedge, fighter, freighter, saucer, spine, pod, or classic
+#   wing_span                      spread of wings, pods or beam: 0 narrow, 1 wide
+#   fuselage_roundness             bias towards round sections (saucer: thickness), 0..1
+#   taper                          front-half scale: 0 wider, 0.5 neutral, 1 narrower
 #   num_hull_segments_min/max       how many sections each end of the hull is extruded by
 #                                   (max is exclusive, as it always was; equal to min means exactly min)
 #   hull_scale_x/y/z                the starting block's length, width and height: (low, high)
@@ -586,22 +894,37 @@ def generate_spaceship(random_seed='',
                        antenna_density=0.1,
                        max_round_segments=32,
                        sphere_subdivisions=3,
-                       horizontal_symmetry_chance=0.5,
-                       vertical_symmetry_chance=0.5):
+                       horizontal_symmetry_chance=1.0,
+                       vertical_symmetry_chance=0.5,
+                       archetype='wedge',
+                       wing_span=0.5,
+                       fuselage_roundness=0.5,
+                       taper=0.5):
     if random_seed:
         seed(random_seed)
     max_round_segments = max(3, int(max_round_segments))
+    if archetype not in ARCHETYPES:
+        raise ValueError("Unknown archetype: " + archetype)
 
-    # Let's start with a unit BMesh cube scaled randomly
     bm = bmesh.new()
-    bmesh.ops.create_cube(bm, size=1)
-    scale_vector = Vector(
-        (uniform(*hull_scale_x), uniform(*hull_scale_y), uniform(*hull_scale_z)))
-    bmesh.ops.scale(bm, vec=scale_vector, verts=bm.verts)
+    if archetype == 'classic':
+        bmesh.ops.create_cube(bm, size=1)
+        scale_vector = Vector(
+            (uniform(*hull_scale_x), uniform(*hull_scale_y), uniform(*hull_scale_z)))
+        bmesh.ops.scale(bm, vec=scale_vector, verts=bm.verts)
+    else:
+        _build_archetype(bm, archetype, wing_span, fuselage_roundness)
+        front = max(v.co.x for v in bm.verts)
+        back = min(v.co.x for v in bm.verts)
+        for vert in bm.verts:
+            along = max(0.0, (vert.co.x - (front + back) * 0.5) / ((front - back) * 0.5))
+            scale = 1.0 + along * (0.3 - 0.6 * min(max(taper, 0.0), 1.0))
+            vert.co.y *= scale
+            vert.co.z *= scale
+        bm.normal_update()
 
-    # Extrude out the hull along the X axis, adding some semi-random perturbations
     nose_face = None
-    for face in bm.faces[:]:
+    for face in (bm.faces[:] if archetype == 'classic' else []):
         if abs(face.normal.x) > 0.5:
             is_nose = face.normal.x > 0
             hull_segment_length = uniform(*hull_segment_lengths)
@@ -668,7 +991,7 @@ def generate_spaceship(random_seed='',
         scale_face(bm, nose_face, nose_scale, nose_scale, nose_scale)
 
     # Add some large asymmetrical sections of the hull that stick out
-    if create_asymmetry_segments:
+    if create_asymmetry_segments and archetype == 'classic':
         for face in bm.faces[:]:
             # Skip any long thin faces as it'll probably look stupid
             if get_aspect_ratio(face) > 4:
@@ -684,7 +1007,16 @@ def generate_spaceship(random_seed='',
                         scale_face(bm, face, s, s, s)
 
     # Now the basic hull shape is built, let's categorize + add detail to all the faces
-    if create_face_detail:
+    if create_face_detail and archetype != 'classic' and create_grids:
+        length = max(v.co.x for v in bm.verts) - min(v.co.x for v in bm.verts)
+        panels = [face for face in bm.faces
+                  if len(face.verts) == 4 and face.material_index == Material.hull
+                  and face.normal.z > 0.5 and get_aspect_ratio(face) < 3
+                  and face.calc_area() < length * length * 0.04 and random() < 0.18]
+        for face in panels[:6]:
+            add_grid_to_face(bm, face, (length * 0.002, length * 0.004), cuts=1, fractal=0)
+
+    if create_face_detail and archetype == 'classic':
         engine_faces = []
         grid_faces = []
         antenna_faces = []
@@ -769,7 +1101,7 @@ def generate_spaceship(random_seed='',
                 add_cylinders_to_face(bm, face, max_round_segments)
 
     # Apply horizontal symmetry sometimes
-    if allow_horizontal_symmetry and random() > 1 - horizontal_symmetry_chance:
+    if archetype != 'classic' or (allow_horizontal_symmetry and random() > 1 - horizontal_symmetry_chance):
         bmesh.ops.symmetrize(bm, input=bm.verts[:] + bm.edges[:] + bm.faces[:], direction="Y")
 
     # Apply vertical symmetry sometimes - this can cause spaceship "islands", so disabled by default
@@ -790,9 +1122,19 @@ def generate_spaceship(random_seed='',
                 setstate(state)
                 add_exhaust_to_face(bm, face)
 
+    if archetype != 'classic':
+        bm.normal_update()
+        for face in bm.faces:
+            face.smooth = True
+        for edge in bm.edges:
+            edge.smooth = (edge.is_manifold and edge.calc_face_angle(0) < radians(50)
+                           and edge.link_faces[0].material_index == edge.link_faces[1].material_index)
+
     # Finish up, write the bmesh into a new mesh
     me = bpy.data.meshes.new('Mesh')
     bm.to_mesh(me)
+    if archetype != 'classic':
+        me["rounded"] = True
     bm.free()
 
     # Add the mesh to the scene
@@ -812,11 +1154,11 @@ def generate_spaceship(random_seed='',
     # Add a fairly broad bevel modifier to angularize shape
     if apply_bevel_modifier:
         bevel_modifier = ob.modifiers.new('Bevel', 'BEVEL')
-        bevel_modifier.width = uniform(5, 20)
+        bevel_modifier.width = uniform(5, 20) if archetype == 'classic' else 3
         bevel_modifier.offset_type = 'PERCENT'
         bevel_modifier.segments = 2
-        bevel_modifier.profile = 0.25
-        bevel_modifier.limit_method = 'NONE'
+        bevel_modifier.profile = 0.25 if archetype == 'classic' else 0.5
+        bevel_modifier.limit_method = 'NONE' if archetype == 'classic' else 'ANGLE'
 
     # Add materials to the spaceship: the textured ones, or five empty slots that keep each face's material index
     me = ob.data

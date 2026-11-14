@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Spaceship Generator",
     "author": "Michael Davies",
-    "version": (1, 2, 0),
+    "version": (2, 0, 0),
     "blender": (4, 2, 0),
     "location": "View3D > Add > Mesh",
     "description": "Procedurally generate 3D spaceships from a random seed.",
@@ -18,7 +18,7 @@ else:
     from . import spaceship_generator
 
 import bpy
-from bpy.props import StringProperty, BoolProperty, IntProperty, FloatProperty
+from bpy.props import StringProperty, BoolProperty, IntProperty, FloatProperty, EnumProperty
 from bpy.types import Operator
 
 class GenerateSpaceship(Operator):
@@ -37,11 +37,22 @@ class GenerateSpaceship(Operator):
     allow_horizontal_symmetry  : BoolProperty(default=True,  name='Allow Horizontal Symmetry')
     allow_vertical_symmetry    : BoolProperty(default=False, name='Allow Vertical Symmetry')
     apply_bevel_modifier       : BoolProperty(default=True,  name='Apply Bevel Modifier')
+    archetype                  : EnumProperty(default='wedge', name='Archetype', items=(
+        ('classic', 'Classic', 'A chain of extruded boxes, as the generator always drew'),
+        ('wedge', 'Wedge', 'One flat arrowhead over a stern engine row'),
+        ('fighter', 'Fighter', 'A slender fuselage with swept wings'),
+        ('freighter', 'Freighter', 'A cab, a spine and a train of containers'),
+        ('saucer', 'Saucer', 'A lens with mandibles and a cockpit bump'),
+        ('spine', 'Spine', 'Modules hung along a boom'),
+        ('pod', 'Pod', 'A short tug on two engine pods')))
+    taper                      : FloatProperty(default=0.5, min=0, max=1, name='Taper')
+    wing_span                  : FloatProperty(default=0.5, min=0, max=1, name='Wing Span')
+    fuselage_roundness         : FloatProperty(default=0.5, min=0, max=1, name='Fuselage Roundness')
     assign_materials           : BoolProperty(default=True,  name='Assign Materials')
     nose_taper                 : FloatProperty(default=0, min=0, max=0.95, name='Nose Taper')
     min_slenderness            : FloatProperty(default=0, min=0, soft_max=8, name='Min. Slenderness')
     asymmetry_chance           : FloatProperty(default=0.15, min=0, max=1, name='Asymmetry Chance')
-    horizontal_symmetry_chance : FloatProperty(default=0.5, min=0, max=1, name='Horizontal Symmetry Chance')
+    horizontal_symmetry_chance : FloatProperty(default=1, min=0, max=1, name='Horizontal Symmetry Chance')
     antenna_density            : FloatProperty(default=0.1, min=0, max=1, name='Antenna Density')
     create_weapons             : BoolProperty(default=True,  name='Create Weapons')
 
@@ -63,7 +74,11 @@ class GenerateSpaceship(Operator):
             asymmetry_chance=self.asymmetry_chance,
             horizontal_symmetry_chance=self.horizontal_symmetry_chance,
             antenna_density=self.antenna_density,
-            create_weapons=self.create_weapons)
+            create_weapons=self.create_weapons,
+            archetype=self.archetype,
+            taper=self.taper,
+            wing_span=self.wing_span,
+            fuselage_roundness=self.fuselage_roundness)
         return {'FINISHED'}
 
 def menu_func(self, context):
