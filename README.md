@@ -20,6 +20,9 @@ In the generator itself:
 * The movie renderer and other unused code are gone.
 * Defaults intentionally changed: a seed now draws a symmetric wedge, not the old box chain. Select `archetype="classic"` for the original machinery; its horizontal mirror chance now defaults to 1.
 * Archetypes keep their engines even with surface detail disabled.
+* **Hardware, not greebles.** `pipes` runs tubes nose to stern along a plate, `armour` stands plates proud of the plating, `intakes` sinks barred recesses into a flank, `hubs` bolts refuelling couplings, `mounts` lays flat bare-metal pads for equipment that is not there yet, `ladders` puts rails and rungs down a side, and `lattice` hangs a tool frame off the belly. Each is a 0–1 density: the count and the place are drawn from the seed, and 0 draws nothing. Every fitting is laid on the half the horizontal mirror keeps, so the symmetrize that follows gives it its pair, and it is skipped on panels too thin to carry it — a tube on a wing's edge reads as a strut.
+* **Six nozzle shapes** instead of the one bell: `round`, `square`, `slot`, `cluster` (three small ones), `bell` (flared) and `grille` (recessed, with bars across its mouth). Whichever it is, the throat's floor keeps the exhaust material, so a reader of the mesh — Galaxy's plume anchors — still finds the drive.
+* **A lamp slot for large hulls.** Zone 6 is a lamp: flat warm panes standing just off the plating, in rows for quarter windows, and the lit ceiling of a docking bay whose mouth is a recess in a flank. It is the only face a hull emits from; the caller decides whether a hull carries any at all.
 
 ### Silhouettes first
 
@@ -30,6 +33,12 @@ Rows: wedge, fighter, freighter, saucer, spine, pod. Columns: four consecutive s
 ![Before and after the six shipped hulls, at equal length and at their actual game scale](docs/images/archetype-before-after.webp)
 
 Rows 1–2: before and after at equal length. Rows 3–4: before and after on the same camera at game scale (25, 30, 40, 35, 60 and 90 metres). Starter is a compact pod; miner a spine; hauler a stacked freighter; frigate a fighter; destroyer a narrow dagger wedge; cruiser a broad stacked saucer with a tall bridge and four drives. Both use Galaxy's layered material. The new hero/fleet pairs total 524 kB, versus 653 kB before this pass; all stay below 4,000/1,200 triangles, one draw call per hull.
+
+### Hardware, drives and lamps
+
+![The six shipped hulls before and after the hardware pass, in Galaxy's layered material](docs/images/hardware.webp)
+
+Above: the six shipped hulls as they were. Below: the same hulls after the hardware pass, at the same camera and in Galaxy's real-time material. The hauler gains rows of quarter lights along its containers and a lit docking bay; the cruiser a ring of them round its deck; every class gains tubes, armour plates, pads, couplings and ladders drawn from its own seed. The nine new controls are densities, so a sweep from 0 to 1 is a sweep from a bare hull to a busy one. The new hero/fleet pairs total 946 kB against 524 kB, still one material and one draw call a hull, and all inside the 4,000/1,200 triangle ceilings; frame time on a hull filling a phone's frame moves by 0.03–0.06 ms.
 
 ### What the parameters do
 

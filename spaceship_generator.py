@@ -201,25 +201,95 @@ def _wings(bm, root, span, chord, tip_chord, at_x, sweep, lift, rise, thickness)
             rings.append([bm.verts.new((x + px, y, z + pz)) for px, pz in points])
         _bridge_rings(bm, rings)
 
-def _engine_bell(bm, x, y, z, radius):
-    # A drive on the stern plane `x`, looking down -X: a bell proud of the
-    # hull, a rim, and a recessed throat whose floor wears the exhaust
-    # material — the shape the classic exhausts leave, so a reader of the
-    # mesh finds the same thing.
-    rows = (
-        (x + radius * 0.8, 1.0),
-        (x - radius * 0.55, 1.0),
-        (x - radius * 0.55, 0.72),
-        (x - radius * 0.12, 0.6),
-    )
+def _box(bm, matrix, size, material):
+    # A block of `size`, placed by a frame and named by its material.
+    result = bmesh.ops.create_cube(bm, size=1.0,
+                                   matrix=matrix @ Matrix.Diagonal((size[0], size[1], size[2], 1.0)))
+    for vert in result['verts']:
+        for face in vert.link_faces:
+            face.material_index = material
+
+def _tube(bm, start, end, radius, material, segments=8):
+    # A capped cylinder from one point to another.
+    run = end - start
+    turn = Vector((0.0, 0.0, 1.0)).rotation_difference(run.normalized()).to_matrix().to_4x4()
+    result = bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=False, segments=max(4, segments),
+                                   radius1=radius, radius2=radius, depth=run.length,
+                                   matrix=Matrix.Translation((start + end) * 0.5) @ turn)
+    for vert in result['verts']:
+        for face in vert.link_faces:
+            face.material_index = material
+
+def _quad(bm, matrix, size, material):
+    # A flat panel of `size` in a frame, facing the way the frame's own front does.
+    corners = ((0.5, 0.5), (0.5, -0.5), (-0.5, -0.5), (-0.5, 0.5))
+    face = bm.faces.new([bm.verts.new(matrix @ Vector((x * size[0], y * size[1], 0.0))) for x, y in corners])
+    face.material_index = material
+
+
+# The rings of one drive, per nozzle shape: (x, half-width, half-height, roundness), the last one
+# closed and wearing the exhaust material. `bell` is the shape every hull had before shapes.
+_NOZZLE_ROWS = {
+    'bell': lambda x, r: (
+        (x + r * 0.8, 1.0, 1.0, 1.0),
+        (x - r * 0.55, 1.0, 1.0, 1.0),
+        (x - r * 0.55, 0.72, 0.72, 1.0),
+        (x - r * 0.12, 0.6, 0.6, 1.0),
+    ),
+    'round': lambda x, r: (
+        (x + r * 0.7, 1.0, 1.0, 1.0),
+        (x - r * 0.5, 1.0, 1.0, 1.0),
+        (x - r * 0.5, 0.78, 0.78, 1.0),
+        (x - r * 0.32, 0.78, 0.78, 1.0),
+    ),
+    'square': lambda x, r: (
+        (x + r * 0.7, 1.0, 1.0, 0.0),
+        (x - r * 0.5, 1.0, 1.0, 0.0),
+        (x - r * 0.5, 0.8, 0.8, 0.0),
+        (x - r * 0.3, 0.8, 0.8, 0.0),
+    ),
+    'slot': lambda x, r: (
+        (x + r * 0.7, 1.0, 0.45, 0.25),
+        (x - r * 0.5, 1.0, 0.45, 0.25),
+        (x - r * 0.5, 0.84, 0.32, 0.25),
+        (x - r * 0.3, 0.84, 0.32, 0.25),
+    ),
+    'grille': lambda x, r: (
+        (x + r * 0.6, 1.0, 0.9, 0.0),
+        (x - r * 0.45, 1.0, 0.9, 0.0),
+        (x - r * 0.5, 0.92, 0.8, 0.0),
+        (x - r * 0.62, 0.7, 0.58, 0.0),
+    ),
+}
+# The shape a drive is drawn in, set once per hull by `generate_spaceship`.
+_NOZZLE = 'bell'
+
+def _engine_bell(bm, x, y, z, radius, shape=None):
+    # A drive on the stern plane `x`, looking down -X: a bell or another of
+    # the shapes a hull may be given, proud of the hull, its throat closed by
+    # a floor that wears the exhaust material — the shape the classic
+    # exhausts leave, so a reader of the mesh finds the same thing.
+    shape = shape or _NOZZLE
+    # A drive reads as one: the stern gives it a throat, and a hull's own scale is no reason to shrink it
+    # to a rivet, so every shape is drawn a little wider than the throat it replaces.
+    radius = radius * 1.3
+    if shape == 'cluster':
+        for offset_y, offset_z in ((0.0, radius * 0.26), (radius * 0.22, -radius * 0.13), (-radius * 0.22, -radius * 0.13)):
+            _engine_bell(bm, x, y + offset_y, z + offset_z, radius * 0.5, 'round')
+        return
     rings = []
-    for ring_x, scale in rows:
-        points = _ring_points(radius * scale, radius * scale, 1.0)
+    for ring_x, half_width, half_height, roundness in _NOZZLE_ROWS[shape](x, radius):
+        points = _ring_points(radius * half_width, radius * half_height, roundness)
         rings.append([bm.verts.new((ring_x, y + py, z + pz)) for py, pz in points])
     faces = _bridge_rings(bm, rings)
     for face in faces:
         face.material_index = Material.hull_dark
     faces[-1].material_index = Material.exhaust_burn
+    if shape == 'grille':
+        # the bars that make a recessed mouth a grille rather than a hole
+        for step in (-1, 1):
+            _box(bm, Matrix.Translation((x - radius * 0.42, y, z + step * radius * 0.26)),
+                 (radius * 0.14, radius * 1.7, radius * 0.1), Material.hull_dark)
 
 def _engine_row(bm, x, z, count, radius, spread):
     if count > 1:
@@ -1589,6 +1659,211 @@ def add_disc_to_face(bm, face, max_segments=32):
         for face in vert.link_faces:
             face.material_index = Material.glow_disc
 
+# The rest of a hull's hardware: fittings laid on the bare forms, on the half the mirror keeps
+# (y >= 0), so the symmetrize that follows gives each one its pair.
+
+def _dressable(bm, direction):
+    # Quad hull faces pointing `direction` on the kept half, largest first, and the hull's length.
+    length = max(v.co.x for v in bm.verts) - min(v.co.x for v in bm.verts)
+    faces = [face for face in bm.faces
+             if len(face.verts) == 4 and face.material_index == Material.hull
+             and face.normal.dot(direction) > 0.75
+             and face.calc_center_median().y > -1e-5
+             and get_aspect_ratio(face) < 3
+             and face.calc_area() > length * length * 0.0015]
+    faces.sort(key=lambda face: -face.calc_area())
+    return faces, length
+
+def _share(faces, amount, most):
+    # A fitting's own faces: up to `most` of them, fewer as `amount` falls, none at zero.
+    if amount <= 0:
+        return []
+    count = max(1, int(round(amount * most)))
+    return [face for face in faces if face.is_valid and random() < 0.55 + 0.45 * amount][:count]
+
+def _coat(result, material):
+    for vert in result['verts']:
+        for face in vert.link_faces:
+            face.material_index = material
+
+# Tubes nose to stern along a plate, sitting half in the plating.
+def add_pipes_to_face(bm, face, length, amount=0.3, max_segments=32):
+    # a tube on a wing's edge is a strut, not pipework: it goes on a plate wide enough to carry it
+    if not face.is_valid or len(face.verts) != 4 or get_aspect_ratio(face) > 2.4:
+        return
+    rails = [sorted(edge.verts, key=lambda vert: vert.co.x) for edge in face.edges
+             if abs(edge.verts[1].co.x - edge.verts[0].co.x) > length * 0.02]
+    if len(rails) < 2:
+        return
+    rails.sort(key=lambda rail: rail[0].co.y + rail[1].co.y)
+    near, far = rails[0], rails[-1]
+    radius = length * (0.006 + 0.008 * amount)
+    count = 1 + int(round(amount * 2))
+    for step in range(count):
+        across = (step + 1) / (count + 1.0)
+        head = near[0].co.lerp(near[1].co, 0.1).lerp(far[0].co.lerp(far[1].co, 0.1), across)
+        tail = near[0].co.lerp(near[1].co, 0.92).lerp(far[0].co.lerp(far[1].co, 0.92), across)
+        lift = face.normal * radius * 0.6
+        _tube(bm, head + lift, tail + lift, radius, Material.hull_dark, min(6, max_segments))
+
+# A plate standing proud of the hull, its edge left to the bevel that follows.
+def add_armour_to_face(bm, face, length, amount=0.3):
+    if not face.is_valid:
+        return
+    rise = length * (0.005 + 0.010 * amount)
+    plate = extrude_face(bm, face, rise)
+    scale_face(bm, plate, 0.94, 0.94, 1.0)
+    plate = extrude_face(bm, plate, rise * 0.6)
+    scale_face(bm, plate, 0.9, 0.9, 1.0)
+    plate.material_index = Material.hull
+
+# A recess sunk into a plate, its mouth barred: a ship's one real hole.
+def add_intakes_to_face(bm, face, length, amount=0.3, max_segments=32):
+    if not face.is_valid:
+        return
+    width, height = get_face_width_and_height(face)
+    depth = length * (0.010 + 0.015 * amount)
+    mouth = extrude_face(bm, face, -depth)
+    for vert in mouth.verts:
+        for wall in vert.link_faces:
+            if wall is not mouth:
+                wall.material_index = Material.hull_dark
+    mouth.material_index = Material.hull_dark
+    bars = 2 if amount < 0.6 else 3
+    frame = get_face_matrix(mouth, mouth.calc_center_bounds())
+    for step in range(bars):
+        across = (step - (bars - 1) / 2.0) * height * 0.34
+        _box(bm, frame @ Matrix.Translation((0.0, across, 0.0)),
+             (width * 0.8, max(length * 0.002, 0.0015), max(length * 0.003, 0.002)), Material.hull_dark)
+
+# A coupling standing proud of the hull, where a hose or a boom would lock on.
+def add_hub_to_face(bm, face, length, amount=0.3, max_segments=32):
+    if not face.is_valid:
+        return
+    width, height = get_face_width_and_height(face)
+    across = min(width, height) * 0.36
+    rise = max(length * 0.006, 0.002)
+    _coat(bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=False, segments=min(12, max_segments),
+                                radius1=across, radius2=across * 0.82, depth=rise,
+                                matrix=get_face_matrix(face, face.calc_center_bounds() + face.normal * rise * 0.5)),
+          Material.hull_dark)
+    _coat(bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=False, segments=min(12, max_segments),
+                                radius1=across * 0.55, radius2=across * 0.45, depth=rise * 0.8,
+                                matrix=get_face_matrix(face, face.calc_center_bounds() + face.normal * rise * 1.3)),
+          Material.hull_dark)
+
+# Flat pads where a turret or a piece of equipment would sit: bare metal, and empty (ART 4.2).
+def add_mounts_to_face(bm, face, length, amount=0.3):
+    if not face.is_valid:
+        return
+    width, height = get_face_width_and_height(face)
+    pad = min(width, height) * 0.34
+    rise = max(length * 0.005, 0.002)
+    count = 1 + int(round(amount * 3))
+    frame = get_face_matrix(face, face.calc_center_bounds())
+    for step in range(count):
+        across = (step - (count - 1) / 2.0) * pad * 1.5
+        _box(bm, frame @ Matrix.Translation((across, 0.0, -rise * 0.5)), (pad, pad, rise), Material.glow_disc)
+
+# Rails and rungs down a flank, from the top of the plate to its bottom.
+def add_ladder_to_face(bm, face, length, amount=0.3):
+    # a ladder needs a plate with some height to it, and reads as scrap on a wing's edge
+    if not face.is_valid or get_aspect_ratio(face) > 2.4:
+        return
+    width, height = get_face_width_and_height(face)
+    frame = get_face_matrix(face, face.calc_center_bounds())
+    across = min(width, height) * 0.22
+    bar = max(length * 0.0045, 0.002)
+    rungs = 3 + int(round(amount * 4))
+    for side in (-1.0, 1.0):
+        _box(bm, frame @ Matrix.Translation((side * across, 0.0, -bar * 0.5)),
+             (bar, height * 0.74, bar), Material.hull_dark)
+    for step in range(rungs):
+        along = (step / (rungs - 1.0) - 0.5) * height * 0.66
+        _box(bm, frame @ Matrix.Translation((0.0, along, -bar * 0.5)),
+             (across * 2.0, bar * 0.8, bar), Material.hull_dark)
+
+# A frame of bars standing off the belly: where a miner's tools and cables would bolt on.
+def add_lattice_to_face(bm, face, length, amount=0.3, max_segments=32):
+    if not face.is_valid:
+        return
+    width, height = get_face_width_and_height(face)
+    stand = length * (0.010 + 0.012 * amount)
+    bar = max(length * 0.007, 0.002)
+    frame = get_face_matrix(face, face.calc_center_bounds() + face.normal * length * 0.001)
+    brace = get_face_matrix(face, face.calc_center_bounds() + face.normal * stand * 0.5)
+    for side in (-1.0, 1.0):
+        _box(bm, brace @ Matrix.Translation((0.0, side * height * 0.3, 0.0)),
+             (width * 0.82, bar, bar), Material.hull_dark)
+        _box(bm, brace @ Matrix.Translation((side * width * 0.3, 0.0, 0.0)),
+             (bar, height * 0.62, bar), Material.hull_dark)
+        for corner in (-1.0, 1.0):
+            _box(bm, frame @ Matrix.Translation((corner * width * 0.3, side * height * 0.3, -stand * 0.5)),
+                 (bar, bar, stand), Material.hull_dark)
+
+# Quarter lights: rows of panes standing in the plating, the one thing on a hull that lights it.
+def add_windows_to_face(bm, face, length, amount=0.3):
+    if not face.is_valid:
+        return
+    width, height = get_face_width_and_height(face)
+    frame = get_face_matrix(face, face.calc_center_bounds())
+    rows = 1 + int(round(amount * 2))
+    panes = 2 + int(round(amount * 3))
+    pane = width * 0.13
+    tall = max(length * 0.006, 0.0025)
+    for row in range(rows):
+        along = (row - (rows - 1) / 2.0) * height * 0.16
+        for step in range(panes):
+            across = (step - (panes - 1) / 2.0) * pane * 1.7
+            _quad(bm, frame @ Matrix.Translation((across, along, -length * 0.0025)),
+                  (pane, tall * 1.8), Material.light)
+
+# A docking bay: the plate sunk in behind a lit mouth, so a hull carrying one is seen at night.
+def add_bay_to_face(bm, face, length, max_segments=32):
+    if not face.is_valid:
+        return
+    width, height = get_face_width_and_height(face)
+    lip = get_face_matrix(face, face.calc_center_bounds() + face.normal * length * 0.001)
+    depth = length * 0.05
+    mouth = extrude_face(bm, face, -depth)
+    for vert in mouth.verts:
+        for wall in vert.link_faces:
+            if wall is not mouth:
+                wall.material_index = Material.hull_dark
+    mouth.material_index = Material.hull_dark
+    scale_face(bm, mouth, 0.86, 0.66, 1.0)
+    _quad(bm, lip @ Matrix.Translation((0.0, height * 0.28, -length * 0.0025)),
+          (width * 0.7, max(length * 0.010, 0.004)), Material.light)
+
+# The hardware of one archetype hull, in the order the fittings need the mesh: the armour and the
+# recesses first, since they cut the faces the rest are laid on.
+def add_archetype_detail(bm, pipes=0.0, armour=0.0, intakes=0.0, hubs=0.0, mounts=0.0,
+                         ladders=0.0, lattice=0.0, lights=0.0, max_segments=32):
+    top, length = _dressable(bm, Vector((0.0, 0.0, 1.0)))
+    flank, _ = _dressable(bm, Vector((0.0, 1.0, 0.0)))
+    belly, _ = _dressable(bm, Vector((0.0, 0.0, -1.0)))
+
+    for face in _share(top[:2] + belly[:2], armour, 4):
+        add_armour_to_face(bm, face, length, armour)
+    for face in _share(flank, intakes, 2):
+        add_intakes_to_face(bm, face, length, intakes, max_segments)
+    for face in _share(flank[1:], min(lights, 1.0) * 0.6, 1):
+        add_bay_to_face(bm, face, length, max_segments)
+    for face in _share(flank, pipes, 3):
+        add_pipes_to_face(bm, face, length, pipes, max_segments)
+    for face in _share(top, min(lights, 1.0), 3):
+        add_windows_to_face(bm, face, length, lights)
+    for face in _share(flank[1:], min(lights, 1.0), 3):
+        add_windows_to_face(bm, face, length, lights * 0.7)
+    for face in _share(top[1:], hubs, 1):
+        add_hub_to_face(bm, face, length, hubs, max_segments)
+    for face in _share(top[2:], mounts, 3):
+        add_mounts_to_face(bm, face, length, mounts)
+    for face in _share(flank[2:], ladders, 1):
+        add_ladder_to_face(bm, face, length, ladders)
+    for face in _share(belly, lattice, 2):
+        add_lattice_to_face(bm, face, length, lattice, max_segments)
+
 class Material(IntEnum):
     hull = 0            # Plain spaceship hull
     hull_lights = 1     # Spaceship hull with emissive windows
@@ -1596,6 +1871,7 @@ class Material(IntEnum):
     exhaust_burn = 3    # Emissive engine burn material
     glow_disc = 4       # Emissive landing pad disc material
     glass = 5           # Cockpit glazing: dark, smooth, opaque, never lit from inside
+    light = 6           # A lamp: a quarter light, a docking bay's mouth. The one face on a hull that emits
 
 
 # Returns shader node
@@ -1803,7 +2079,16 @@ def generate_spaceship(random_seed='',
                        wing_span=0.5,
                        fuselage_roundness=0.5,
                        layout='balanced',
-                       taper=0.5):
+                       taper=0.5,
+                       pipes=0.0,
+                       armour=0.0,
+                       intakes=0.0,
+                       hubs=0.0,
+                       mounts=0.0,
+                       ladders=0.0,
+                       lattice=0.0,
+                       lights=0.0,
+                       nozzle='bell'):
     if random_seed:
         seed(random_seed)
     max_round_segments = max(3, int(max_round_segments))
@@ -1811,6 +2096,10 @@ def generate_spaceship(random_seed='',
         raise ValueError("Unknown archetype: " + archetype)
     if layout not in LAYOUTS:
         raise ValueError("Unknown layout: " + layout)
+    if nozzle not in _NOZZLE_ROWS and nozzle != 'cluster':
+        raise ValueError("Unknown nozzle: " + nozzle)
+    global _NOZZLE
+    _NOZZLE = nozzle
 
     bm = bmesh.new()
     if archetype == 'classic':
@@ -1913,15 +2202,16 @@ def generate_spaceship(random_seed='',
                         scale_face(bm, face, s, s, s)
 
     # Now the basic hull shape is built, let's categorize + add detail to all the faces
-    if create_face_detail and archetype != 'classic' and create_grids:
-        length = max(v.co.x for v in bm.verts) - min(v.co.x for v in bm.verts)
-        panels = [face for face in bm.faces
-                  if len(face.verts) == 4 and face.material_index == Material.hull
-                  and face.normal.z > 0.5 and get_aspect_ratio(face) < 3
-                  and face.calc_area() < length * length * 0.04 and random() < 0.18]
-        for face in panels[:6]:
-            add_grid_to_face(bm, face, (length * 0.002, length * 0.004), cuts=1, fractal=0)
-
+    if create_face_detail and archetype != 'classic':
+        if create_grids:
+            length = max(v.co.x for v in bm.verts) - min(v.co.x for v in bm.verts)
+            panels = [face for face in bm.faces
+                      if len(face.verts) == 4 and face.material_index == Material.hull
+                      and face.normal.z > 0.5 and get_aspect_ratio(face) < 3
+                      and face.calc_area() < length * length * 0.04 and random() < 0.18]
+            for face in panels[:6]:
+                add_grid_to_face(bm, face, (length * 0.002, length * 0.004), cuts=1, fractal=0)
+        add_archetype_detail(bm, pipes, armour, intakes, hubs, mounts, ladders, lattice, lights, max_round_segments)
     if create_face_detail and archetype == 'classic':
         engine_faces = []
         grid_faces = []
