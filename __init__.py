@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Spaceship Generator",
     "author": "Michael Davies",
-    "version": (2, 1, 0),
+    "version": (2, 2, 0),
     "blender": (4, 2, 0),
     "location": "View3D > Add > Mesh",
     "description": "Procedurally generate 3D spaceships from a random seed.",
@@ -45,6 +45,11 @@ class GenerateSpaceship(Operator):
         ('saucer', 'Saucer', 'A lens with mandibles and a cockpit bump'),
         ('spine', 'Spine', 'Modules hung along a boom'),
         ('pod', 'Pod', 'A short tug on two engine pods')))
+    layout                     : EnumProperty(default='balanced', name='Layout', items=(
+        ('balanced', 'Balanced', 'The archetype as it has always been drawn'),
+        ('compact', 'Compact', 'One tight solid form, nothing spread out'),
+        ('split', 'Split', 'Two forms either side of the centre line, joined'),
+        ('stacked', 'Stacked', 'Forms tiered over each other')))
     taper                      : FloatProperty(default=0.5, min=0, max=1, name='Taper')
     wing_span                  : FloatProperty(default=0.5, min=0, max=1, name='Wing Span')
     fuselage_roundness         : FloatProperty(default=0.5, min=0, max=1, name='Fuselage Roundness')
@@ -76,6 +81,7 @@ class GenerateSpaceship(Operator):
             antenna_density=self.antenna_density,
             create_weapons=self.create_weapons,
             archetype=self.archetype,
+            layout=self.layout,
             taper=self.taper,
             wing_span=self.wing_span,
             fuselage_roundness=self.fuselage_roundness)

@@ -128,6 +128,10 @@ def is_rear_face(face):
 
 ARCHETYPES = ('classic', 'wedge', 'fighter', 'freighter', 'saucer', 'spine', 'pod')
 
+# How one archetype's forms are arranged: its own balanced form, one solid tight
+# form, two forms split across the beam, or forms tiered one over the other.
+LAYOUTS = ('balanced', 'compact', 'split', 'stacked')
+
 
 def _ring_points(width, height, roundness, sides=8):
     # A ring of half-extents `width` x `height`: at roundness 0 a crisply
@@ -173,15 +177,15 @@ def _canopy(bm, sections):
     for face in faces:
         face.material_index = Material.hull_dark
     roof, windshield = faces[1], faces[-2]
-    roof.material_index = windshield.material_index = Material.hull_lights
+    roof.material_index = windshield.material_index = Material.glass
 
-def _disc(bm, sections, sides=12):
+def _disc(bm, sections, sides=12, shift=0.0):
     # A volume stacked down Z through sections (z, radius_x, radius_y): a
-    # saucer's language.
+    # saucer's language. Centred on y = `shift`.
     rings = []
     for z, radius_x, radius_y in sections:
         points = _ring_points(radius_x, radius_y, 1.0, sides)
-        rings.append([bm.verts.new((px, py, z)) for px, py in points])
+        rings.append([bm.verts.new((px, shift + py, z)) for px, py in points])
     _bridge_rings(bm, rings)
 
 def _wings(bm, root, span, chord, tip_chord, at_x, sweep, lift, rise, thickness):
@@ -227,8 +231,31 @@ def _engine_row(bm, x, z, count, radius, spread):
 def _round_of(base, bias):
     return min(1.0, max(0.0, base + (bias - 0.5) * 0.6))
 
-def _build_wedge(bm, span_scale, round_bias):
+def _slab(bm, fore, aft, half_width, half_height, center_z, shift=0.0, r=0.08, taper=0.92):
+    # A block from `fore` aft to `aft`, its section shrinking to `taper`. Laid
+    # across the ship, fore and aft close together, it is a crossbeam.
+    return _loft(bm, ((fore, half_width, half_height, center_z, r),
+                      (aft, half_width * taper, half_height * taper, center_z, r)), shift=shift)
+
+def _bridge(bm, fore, aft, half_width, half_height, center_z, r=0.15, glass=0.66):
+    # A command block centred on `center_z` with a glazed canopy on its roof.
+    # Returns the roof's height.
+    _slab(bm, fore, aft, half_width, half_height, center_z, r=r, taper=0.94)
+    roof = center_z + half_height
+    canopy_h = half_height * 0.42
+    inset = (fore - aft) * 0.10
+    _canopy(bm, ((fore - inset, half_width * glass, canopy_h, roof + canopy_h * 0.55, 0.3),
+                 (aft + inset * 1.3, half_width * glass * 0.88, canopy_h, roof + canopy_h * 0.55, 0.3)))
+    return roof + canopy_h
+
+def _build_wedge(bm, span_scale, round_bias, layout):
     # A variable arrowhead with a stepped bridge, deck tiers and flank trenches.
+    if layout == 'compact':
+        return _wedge_compact(bm, span_scale, round_bias)
+    if layout == 'split':
+        return _wedge_split(bm, span_scale, round_bias)
+    if layout == 'stacked':
+        return _wedge_stacked(bm, span_scale, round_bias)
     length = uniform(2.9, 3.9)
     nose, stern = length * 0.5, -length * 0.5
     beam = length * uniform(0.18, 0.40) * (0.9 + 0.2 * span_scale)
@@ -313,8 +340,127 @@ def _build_wedge(bm, span_scale, round_bias):
     _engine_row(bm, stern, hz * 1.12, randint(3, 4), hz * uniform(0.55, 0.75),
                 beam * aft_w * uniform(0.58, 0.72))
 
-def _build_fighter(bm, span_scale, round_bias):
+def _wedge_compact(bm, span_scale, round_bias):
+    # A long narrow dagger: a low bridge amidships and blades ahead of it.
+    length = uniform(3.8, 4.6)
+    nose, stern = length * 0.5, -length * 0.5
+    beam = length * uniform(0.085, 0.125) * (0.9 + 0.2 * span_scale)
+    hz = beam * uniform(0.14, 0.24)
+    r = _round_of(0.12, round_bias)
+    waist_x = nose - length * uniform(0.62, 0.74)
+    aft_w = uniform(0.80, 0.92)
+    _loft(bm, (
+        (nose, beam * 0.04, hz * 0.14, hz * 0.14, r),
+        (nose - length * 0.12, beam * 0.17, hz * 0.34, hz * 0.32, r),
+        (nose - length * 0.32, beam * 0.46, hz * 0.62, hz * 0.54, r),
+        (waist_x, beam, hz, hz, r),
+        (stern + length * 0.14, beam * 0.91, hz * 0.94, hz * 1.02, r),
+        (stern, beam * aft_w, hz * 0.74, hz * 1.12, r),
+    ))
+    deck_z = hz * 1.90
+    bridge_fore = waist_x - length * 0.02
+    bridge_h = hz * uniform(0.40, 0.56)
+    _bridge(bm, bridge_fore, bridge_fore - length * uniform(0.16, 0.22),
+            beam * uniform(0.42, 0.56), bridge_h, deck_z + bridge_h, r, glass=0.78)
+    # Blades swept back off the shoulders, ahead of the bridge.
+    fin_span = beam * uniform(1.4, 2.2) * (0.9 + 0.2 * span_scale)
+    fin_x = nose - length * uniform(0.26, 0.34)
+    _wings(bm, beam * uniform(0.26, 0.38), fin_span, length * uniform(0.20, 0.28),
+           length * uniform(0.06, 0.10), fin_x, length * uniform(0.06, 0.14),
+           hz * uniform(0.10, 0.40), fin_span * uniform(0.0, 0.08),
+           length * uniform(0.006, 0.010))
+    ridge_h = hz * uniform(0.16, 0.28)
+    _slab(bm, bridge_fore + length * 0.03, stern + length * 0.12, beam * uniform(0.08, 0.12),
+          ridge_h, deck_z + ridge_h * 0.6, r=0.2, taper=0.70)
+    _engine_row(bm, stern, hz * 1.05, randint(2, 3), hz * uniform(0.50, 0.66),
+                beam * aft_w * uniform(0.52, 0.68))
+
+def _wedge_split(bm, span_scale, round_bias):
+    # Twin slim arrow bodies either side of a command block, tied by a crosspiece.
+    length = uniform(3.4, 4.2)
+    nose, stern = length * 0.5, -length * 0.5
+    body_w = length * uniform(0.095, 0.140) * (0.9 + 0.2 * span_scale)
+    hz = body_w * uniform(0.32, 0.48)
+    r = _round_of(0.10, round_bias)
+    offset = body_w * uniform(1.30, 1.70)
+    for side in (1.0, -1.0):
+        _loft(bm, (
+            (nose, body_w * 0.05, hz * 0.14, hz, r),
+            (nose - length * 0.18, body_w * 0.34, hz * 0.44, hz, r),
+            (nose - length * 0.44, body_w * 0.78, hz * 0.86, hz, r),
+            (nose - length * 0.70, body_w, hz, hz, r),
+            (stern, body_w * 0.86, hz * 0.90, hz, r),
+        ), shift=side * offset)
+    cross_x = nose - length * uniform(0.44, 0.52)
+    cross_len = length * uniform(0.10, 0.16)
+    cross_h = hz * uniform(0.55, 0.90)
+    _slab(bm, cross_x + cross_len * 0.5, cross_x - cross_len * 0.5, offset + body_w * 0.70,
+          cross_h, hz, r=0.12, taper=0.97)
+    cmd_len = length * uniform(0.16, 0.24)
+    bridge_h = hz * uniform(0.85, 1.15)
+    _bridge(bm, cross_x + cmd_len * 0.55, cross_x - cmd_len * 0.45, body_w * uniform(0.60, 0.78),
+            bridge_h, hz + cross_h + bridge_h, r)
+    _slab(bm, cross_x - cmd_len * 0.45, stern + length * 0.04, body_w * 0.26, hz * 0.34,
+          hz * 1.30, r=0.2, taper=0.85)
+    _slab(bm, stern + length * 0.09, stern, offset + body_w * 0.62, hz * 0.46, hz, r=0.15, taper=0.90)
+    for side in (1.0, -1.0):
+        _engine_bell(bm, stern, side * offset, hz, body_w * 0.60)
+
+def _wedge_stacked(bm, span_scale, round_bias):
+    # A broad low arrow under a stepped block superstructure and a ventral keel.
+    length = uniform(3.0, 3.9)
+    nose, stern = length * 0.5, -length * 0.5
+    beam = length * uniform(0.30, 0.46) * (0.9 + 0.2 * span_scale)
+    hz = beam * uniform(0.09, 0.15)
+    r = _round_of(0.06, round_bias)
+    shoulder_x = nose - length * uniform(0.46, 0.60)
+    aft_w = uniform(0.84, 0.94)
+    _loft(bm, (
+        (nose, beam * 0.05, hz * 0.20, hz * 0.20, r),
+        (nose - length * 0.16, beam * 0.30, hz * 0.44, hz * 0.44, r),
+        (nose - length * 0.32, beam * 0.62, hz * 0.74, hz * 0.74, r),
+        (shoulder_x, beam, hz, hz, r),
+        (stern + length * 0.16, beam * 0.98, hz, hz, r),
+        (stern, beam * aft_w, hz * 0.86, hz * 1.10, r),
+    ))
+    deck = hz * 2.0
+    tier_fore = shoulder_x - length * uniform(0.02, 0.06)
+    tier_len = length * uniform(0.26, 0.34)
+    tier_hw = beam * uniform(0.30, 0.38)
+    tier_h = hz * uniform(0.55, 0.75)
+    for tier in range(3):
+        _slab(bm, tier_fore - tier_len * 0.10 * tier, tier_fore - tier_len * (1.0 - 0.16 * tier),
+              tier_hw, tier_h, deck + tier_h, r=0.12, taper=0.94)
+        deck += tier_h * 2.0
+        tier_hw *= uniform(0.70, 0.82)
+        tier_h *= uniform(0.62, 0.78)
+    canopy_h = tier_h * uniform(1.0, 1.4)
+    _canopy(bm, ((tier_fore - tier_len * 0.60, tier_hw * 0.90, canopy_h, deck + canopy_h * 0.5, 0.35),
+                 (tier_fore - tier_len * 0.88, tier_hw * 0.80, canopy_h, deck + canopy_h * 0.5, 0.35)))
+    keel_h = hz * uniform(1.6, 2.6)
+    keel_hw = beam * uniform(0.05, 0.09)
+    keel_fore = shoulder_x - length * 0.03
+    _loft(bm, (
+        (keel_fore, keel_hw, keel_h, -keel_h * 0.55, 0.15),
+        (keel_fore - length * 0.14, keel_hw * 1.6, keel_h * 1.05, -keel_h * 0.55, 0.15),
+        (stern + length * 0.10, keel_hw * 1.1, keel_h * 0.70, -keel_h * 0.45, 0.15),
+    ))
+    rail_y = beam * 0.62
+    rail_hw = beam * uniform(0.022, 0.032)
+    rail_h = hz * uniform(0.10, 0.18)
+    for side in (1.0, -1.0):
+        _slab(bm, shoulder_x - length * 0.02, stern + length * 0.05, rail_hw, rail_h,
+              hz * 1.05, shift=side * rail_y, r=0.15, taper=1.0)
+    _engine_row(bm, stern, hz * 1.15, randint(3, 4), hz * 0.62, beam * aft_w * 0.55)
+
+def _build_fighter(bm, span_scale, round_bias, layout):
     # Swept or forward-swept wings, with canards, intakes or stern fairings.
+    if layout == 'compact':
+        return _fighter_compact(bm, span_scale, round_bias)
+    if layout == 'split':
+        return _fighter_split(bm, span_scale, round_bias)
+    if layout == 'stacked':
+        return _fighter_stacked(bm, span_scale, round_bias)
     length = uniform(3.0, 3.9)
     nose, stern = length * 0.5, -length * 0.5
     r = _round_of(0.72, round_bias)
@@ -386,8 +532,119 @@ def _build_fighter(bm, span_scale, round_bias):
     count = randint(1, 2)
     _engine_row(bm, stern, h * 0.02, count, w * (0.62 if count == 1 else 0.44), w * 0.54)
 
-def _build_freighter(bm, span_scale, round_bias):
+def _fighter_compact(bm, span_scale, round_bias):
+    # A delta flying wing: one blended lifting body, no separate fuselage.
+    length = uniform(2.8, 3.6)
+    nose, stern = length * 0.5, -length * 0.5
+    half_span = length * uniform(0.36, 0.48) * (0.9 + 0.2 * span_scale)
+    hz = length * uniform(0.022, 0.032)
+    r = _round_of(0.5, round_bias)
+    _loft(bm, (
+        (nose, half_span * 0.04, hz * 0.50, 0.0, r),
+        (nose - length * 0.18, half_span * 0.30, hz * 1.10, 0.0, r),
+        (nose - length * 0.38, half_span * 0.68, hz * 1.50, 0.0, r),
+        (stern + length * 0.18, half_span, hz * 1.40, 0.0, r),
+        (stern, half_span * 0.86, hz * 0.90, 0.0, r),
+    ))
+    canopy_fore = nose - length * uniform(0.10, 0.16)
+    canopy_aft = nose - length * uniform(0.28, 0.36)
+    ch = hz * uniform(1.6, 2.4)
+    _canopy(bm, ((canopy_fore, half_span * 0.16, ch, hz * 1.5 + ch * 0.6, 0.45),
+                 (canopy_aft, half_span * 0.12, ch * 0.9, hz * 1.5 + ch * 0.5, 0.45)))
+    fin_hw = length * uniform(0.012, 0.020)
+    fin_h = hz * uniform(3.0, 4.6)
+    fin_x = stern + length * uniform(0.18, 0.28)
+    fin_y = half_span * uniform(0.72, 0.86)
+    for side in (1.0, -1.0):
+        _loft(bm, ((fin_x + length * 0.05, fin_hw, fin_h, hz * 1.2 + fin_h, 0.1),
+                   (fin_x - length * 0.05, fin_hw * 0.8, fin_h * 0.7, hz * 1.2 + fin_h * 0.8, 0.1)),
+              shift=side * fin_y)
+    _engine_row(bm, stern, 0.0, 2, hz * 2.2, half_span * 0.34)
+
+def _fighter_split(bm, span_scale, round_bias):
+    # Twin slim booms carrying one wing, joined by a cockpit pod at the bow.
+    length = uniform(3.0, 3.8)
+    nose, stern = length * 0.5, -length * 0.5
+    boom_w = length * uniform(0.035, 0.055)
+    boom_h = boom_w * uniform(1.0, 1.5)
+    r = _round_of(0.7, round_bias)
+    offset = length * uniform(0.10, 0.14) * (0.9 + 0.2 * span_scale)
+    for side in (1.0, -1.0):
+        _loft(bm, (
+            (nose - length * 0.06, boom_w * 0.35, boom_h * 0.40, 0.0, r),
+            (nose - length * 0.20, boom_w, boom_h, 0.0, r),
+            (stern + length * 0.16, boom_w * 0.92, boom_h * 0.92, 0.0, r),
+            (stern, boom_w * 0.70, boom_h * 0.70, 0.0, r),
+        ), shift=side * offset)
+    wing_fore = nose - length * uniform(0.20, 0.26)
+    wing_root = boom_w * 0.90
+    _wings(bm, wing_root, offset + boom_w * 2.2 - wing_root, length * uniform(0.30, 0.40),
+           length * uniform(0.12, 0.18), wing_fore, length * uniform(0.06, 0.14),
+           0.0, 0.0, length * uniform(0.010, 0.016))
+    _loft(bm, ((nose, boom_w * 0.60, boom_h * 0.60, 0.0, r),
+               (nose - length * 0.10, boom_w * 1.50, boom_h * 1.30, 0.0, r),
+               (wing_fore + length * 0.04, boom_w * 1.60, boom_h * 1.20, 0.0, r)))
+    ch = boom_h * uniform(0.50, 0.80)
+    _canopy(bm, ((nose - length * 0.13, boom_w * 0.85, ch, boom_h * 1.30 + ch * 0.5, 0.4),
+                 (nose - length * 0.21, boom_w * 0.72, ch * 0.9, boom_h * 1.30 + ch * 0.5, 0.4)))
+    _slab(bm, stern + length * 0.11, stern + length * 0.05, offset + boom_w, boom_h * 0.40, 0.0,
+          r=0.2, taper=0.90)
+    for side in (1.0, -1.0):
+        _engine_bell(bm, stern, side * offset, 0.0, boom_w * 0.85)
+
+def _fighter_stacked(bm, span_scale, round_bias):
+    # A slim fuselage between two wing planes, their tips and roots finned together.
+    length = uniform(3.0, 3.9)
+    nose, stern = length * 0.5, -length * 0.5
+    w = length * uniform(0.045, 0.075)
+    h = w * uniform(1.0, 1.4)
+    r = _round_of(0.65, round_bias)
+    _loft(bm, (
+        (nose, w * 0.22, h * 0.26, 0.0, r),
+        (nose - length * 0.16, w * 0.70, h * 0.72, 0.0, r),
+        (nose - length * 0.40, w, h, 0.0, r),
+        (stern + length * 0.20, w * 0.85, h * 0.88, 0.0, r),
+        (stern, w * 0.55, h * 0.60, 0.0, r),
+    ))
+    ch = h * uniform(0.28, 0.42)
+    _canopy(bm, ((nose - length * 0.26, w * 0.52, ch, h * 1.05 + ch * 0.5, 0.4),
+                 (nose - length * 0.38, w * 0.44, ch * 0.9, h * 1.05 + ch * 0.5, 0.4)))
+    span = length * uniform(0.24, 0.34) * (0.9 + 0.2 * span_scale)
+    chord = length * uniform(0.24, 0.34)
+    tip = chord * uniform(0.34, 0.55)
+    upper_at = stern + length * uniform(0.42, 0.55)
+    lower_at = stern + length * uniform(0.26, 0.36)
+    thick = length * uniform(0.007, 0.011)
+    gap = h * uniform(1.6, 2.4)
+    upper_sweep = length * uniform(0.02, 0.10)
+    upper_rise = span * uniform(0.02, 0.12)
+    _wings(bm, w * 0.7, span, chord, tip, upper_at, upper_sweep, gap, upper_rise, thick)
+    _wings(bm, w * 0.7, span * uniform(0.86, 1.0), chord * 0.86, tip * 0.80, lower_at,
+           length * uniform(0.10, 0.20), -gap, -span * uniform(0.02, 0.10), thick)
+    # Diagonal struts join the staggered roots; fins sit on the upper tips.
+    strut_hw = w * uniform(0.18, 0.28)
+    for side in (1.0, -1.0):
+        _loft(bm, ((upper_at, strut_hw, thick * 2, gap, 0.15),
+                   (lower_at, strut_hw, thick * 2, -gap, 0.15)),
+              shift=side * w * 0.70)
+    fin_hw = length * uniform(0.010, 0.016)
+    fin_tip = span + w * 0.70 - fin_hw * 0.5
+    tip_x = upper_at - upper_sweep
+    tip_z = gap + upper_rise
+    for side in (1.0, -1.0):
+        _loft(bm, ((tip_x + tip * 0.15, fin_hw, h * 0.55, tip_z + h * 0.50, 0.1),
+                   (tip_x - tip * 0.25, fin_hw * 0.75, h * 0.35, tip_z + h * 0.30, 0.1)),
+              shift=side * fin_tip)
+    _engine_row(bm, stern, 0.0, 2, w * 0.55, w * 0.50)
+
+def _build_freighter(bm, span_scale, round_bias, layout):
     # Cargo modules on a continuous spine, with a raised forward bridge.
+    if layout == 'compact':
+        return _freighter_compact(bm, span_scale, round_bias)
+    if layout == 'split':
+        return _freighter_split(bm, span_scale, round_bias)
+    if layout == 'stacked':
+        return _freighter_stacked(bm, span_scale, round_bias)
     length = uniform(3.2, 4.6)
     nose, stern = length * 0.5, -length * 0.5
     r = _round_of(0.1, round_bias)
@@ -472,8 +729,94 @@ def _build_freighter(bm, span_scale, round_bias):
     spread = w * (0.45 if drives == 2 else 0.5)
     _engine_row(bm, stern, 0.0, drives, min(h * 0.62, spread * 0.85), spread)
 
-def _build_saucer(bm, span_scale, round_bias):
+def _freighter_compact(bm, span_scale, round_bias):
+    # A broad low barge: one wide hull, a squat cab forward, crates on the deck.
+    length = uniform(2.8, 3.6)
+    nose, stern = length * 0.5, -length * 0.5
+    r = _round_of(0.1, round_bias)
+    w = length * uniform(0.20, 0.28) * (0.9 + 0.3 * span_scale)
+    h = w * uniform(0.34, 0.50)
+    _loft(bm, (
+        (nose, w * 0.72, h * 0.62, 0.0, r),
+        (nose - length * 0.06, w, h, 0.0, r),
+        (stern + length * 0.12, w * 1.02, h * 0.98, 0.0, r),
+        (stern, w * 0.90, h * 0.90, 0.0, r),
+    ))
+    cab_fore = nose - length * 0.05
+    tower_h = h * uniform(0.50, 0.72)
+    _bridge(bm, cab_fore, cab_fore - length * uniform(0.12, 0.17), w * uniform(0.40, 0.52),
+            tower_h, h + tower_h, r, glass=0.62)
+    for i in range(randint(2, 3)):
+        crate_x = cab_fore - length * (0.20 + 0.16 * i)
+        crate_w = w * uniform(0.28, 0.42)
+        crate_h = h * uniform(0.45, 0.75)
+        _slab(bm, crate_x + length * 0.05, crate_x - length * 0.05, crate_w, crate_h,
+              h + crate_h * 0.35, r=0.06, taper=0.90)
+    _engine_row(bm, stern, 0.0, randint(2, 3), min(h * 0.60, w * 0.30), w * 0.42)
+
+def _freighter_split(bm, span_scale, round_bias):
+    # Two parallel cargo rails, tied by a bow pilot house and crossbeams.
+    length = uniform(3.6, 4.6)
+    nose, stern = length * 0.5, -length * 0.5
+    r = _round_of(0.12, round_bias)
+    rail_w = length * uniform(0.045, 0.065) * (0.9 + 0.3 * span_scale)
+    rail_h = rail_w * uniform(0.9, 1.3)
+    offset = rail_w * uniform(3.0, 4.2)
+    for side in (1.0, -1.0):
+        _loft(bm, ((nose - length * 0.05, rail_w * 0.80, rail_h * 0.80, 0.0, r),
+                   (nose - length * 0.18, rail_w, rail_h, 0.0, r),
+                   (stern, rail_w * 0.90, rail_h * 0.90, 0.0, r)),
+              shift=side * offset)
+    # Cargo pods clamp onto each rail, in the same spans on both sides.
+    spans = []
+    cursor = nose - length * 0.26
+    for i in range(randint(2, 3)):
+        each = length * uniform(0.14, 0.22)
+        spans.append((cursor, cursor - each))
+        cursor -= each + length * uniform(0.03, 0.05)
+    crate_w = rail_w * uniform(1.6, 2.4)
+    crate_h = rail_h * uniform(1.4, 2.0)
+    for fore, aft in spans:
+        for side in (1.0, -1.0):
+            _slab(bm, fore, aft, crate_w, crate_h, 0.0, shift=side * offset, r=0.06, taper=0.88)
+    _bridge(bm, nose, nose - length * 0.12, rail_w * uniform(2.4, 3.2), rail_h * uniform(1.6, 2.2),
+            rail_h * 1.9, r, glass=0.55)
+    for x in (nose - length * 0.13, spans[-1][1] - length * 0.02):
+        _slab(bm, x + length * 0.02, x - length * 0.02, offset + rail_w * 0.90, rail_h * 0.45,
+              rail_h, r=0.15, taper=0.95)
+    _engine_row(bm, stern, 0.0, 2, rail_h * 0.75, offset)
+
+def _freighter_stacked(bm, span_scale, round_bias):
+    # Cargo stacked above and below one boom, the bridge high at the bow.
+    length = uniform(3.4, 4.4)
+    nose, stern = length * 0.5, -length * 0.5
+    r = _round_of(0.1, round_bias)
+    w = length * uniform(0.075, 0.100) * (0.9 + 0.3 * span_scale)
+    h = w * uniform(0.80, 1.10)
+    _loft(bm, ((nose, w * 0.55, h * 0.50, h * 0.10, r),
+               (nose - length * 0.04, w * 0.90, h * 0.85, 0.0, r),
+               (nose - length * 0.16, w, h, 0.0, r)))
+    tower_h = h * uniform(0.70, 1.00)
+    _bridge(bm, nose - length * 0.05, nose - length * 0.15, w * 0.55, tower_h, h * 0.75 + tower_h, r,
+            glass=0.70)
+    _slab(bm, nose - length * 0.15, stern, w * 0.42, h * 0.42, 0.0, r=r, taper=0.88)
+    for i in range(randint(2, 3)):
+        crate_x = nose - length * (0.30 + 0.17 * i)
+        crate_w = w * uniform(1.5, 2.2)
+        crate_h = h * uniform(0.55, 0.90)
+        above = i % 2 == 0
+        _slab(bm, crate_x + length * 0.07, crate_x - length * 0.07, crate_w, crate_h,
+              (h * 0.35 + crate_h) if above else -(h * 0.35 + crate_h), r=0.06, taper=0.90)
+    _engine_row(bm, stern, 0.0, randint(2, 3), min(h * 0.55, w * 0.55), w * 0.50)
+
+def _build_saucer(bm, span_scale, round_bias, layout):
     # An oval lens with paired mandibles and a raised glazed command module.
+    if layout == 'compact':
+        return _saucer_compact(bm, span_scale, round_bias)
+    if layout == 'split':
+        return _saucer_split(bm, span_scale, round_bias)
+    if layout == 'stacked':
+        return _saucer_stacked(bm, span_scale, round_bias)
     radius = uniform(1.05, 1.45) * (0.85 + 0.30 * span_scale)
     thick = radius * uniform(0.09, 0.16) * (0.80 + 0.40 * round_bias)
     rx = radius * uniform(0.92, 1.22)
@@ -548,8 +891,93 @@ def _build_saucer(bm, span_scale, round_bias):
     ))
     _engine_row(bm, block_aft, 0.0, randint(2, 4), thick * 0.42, block_hw * 0.55)
 
-def _build_spine(bm, span_scale, round_bias):
+def _saucer_compact(bm, span_scale, round_bias):
+    # One solid oval lens: no mandibles, a squat dome and a low glazed crown.
+    radius = uniform(1.05, 1.40) * (0.85 + 0.30 * span_scale)
+    thick = radius * uniform(0.14, 0.22) * (0.80 + 0.40 * round_bias)
+    rx = radius * uniform(1.00, 1.18)
+    ry = radius * uniform(0.86, 1.02)
+    top = thick * 0.96
+    _disc(bm, (
+        (-thick, rx * 0.44, ry * 0.44),
+        (-thick * 0.42, rx * 0.96, ry * 0.96),
+        (thick * 0.30, rx, ry),
+        (thick * 0.78, rx * 0.80, ry * 0.80),
+        (top, rx * 0.42, ry * 0.42),
+    ))
+    dome = thick * uniform(0.60, 1.00)
+    _disc(bm, ((top - dome * 0.20, rx * 0.34, ry * 0.34),
+               (top + dome, rx * 0.20, ry * 0.20)), sides=8)
+    ch = dome * uniform(0.50, 0.80)
+    _canopy(bm, ((rx * 0.14, rx * 0.11, ch, top + dome + ch * 0.4, 0.5),
+                 (-rx * 0.06, rx * 0.10, ch, top + dome + ch * 0.4, 0.5)))
+    _slab(bm, -rx * 0.30, -rx * 1.02, ry * 0.34, thick * 0.42, 0.0, r=0.3)
+    _engine_row(bm, -rx * 1.02, 0.0, randint(2, 3), thick * 0.40, ry * 0.50)
+
+def _saucer_split(bm, span_scale, round_bias):
+    # Two lens pods either side of a wide command hull, joined at the waist.
+    radius = uniform(0.80, 1.05) * (0.85 + 0.30 * span_scale)
+    thick = radius * uniform(0.14, 0.22) * (0.80 + 0.40 * round_bias)
+    rx = radius * uniform(0.95, 1.15)
+    ry = radius * uniform(0.78, 0.95)
+    offset = ry * uniform(1.25, 1.55)
+    pods = (
+        (-thick, rx * 0.50, ry * 0.50),
+        (-thick * 0.36, rx, ry),
+        (thick * 0.36, rx * 0.96, ry * 0.96),
+        (thick * 0.86, rx * 0.52, ry * 0.52),
+    )
+    for side in (1.0, -1.0):
+        _disc(bm, pods, shift=side * offset)
+    _slab(bm, rx * 0.52, -rx * 0.62, offset + ry * 0.55, thick * 0.34, 0.0, r=0.2, taper=0.92)
+    tower_h = thick * uniform(0.80, 1.20)
+    _bridge(bm, rx * 0.30, -rx * 0.36, offset * 0.62, tower_h, thick * 0.34 + tower_h, 0.2)
+    for side in (1.0, -1.0):
+        _engine_bell(bm, -rx, side * offset, 0.0, thick * 0.42)
+
+def _saucer_stacked(bm, span_scale, round_bias):
+    # A heavy lens with a nested deck ring, a tall stepped bridge and four drives.
+    radius = uniform(1.35, 1.80) * (0.85 + 0.30 * span_scale)
+    thick = radius * uniform(0.16, 0.24) * (0.80 + 0.40 * round_bias)
+    rx = radius * uniform(1.00, 1.16)
+    ry = radius * uniform(0.84, 1.00)
+    rim = thick * uniform(0.30, 0.42)
+    _disc(bm, (
+        (-thick, rx * 0.40, ry * 0.40),
+        (-thick * 0.55, rx * 0.90, ry * 0.90),
+        (-rim, rx, ry),
+        (rim, rx * 0.98, ry * 0.98),
+        (rim * 1.90, rx * 0.72, ry * 0.72),
+        (rim * 2.30, rx * 0.34, ry * 0.34),
+    ))
+    deck = rim * 2.30
+    deck_h = thick * uniform(0.22, 0.34)
+    _disc(bm, ((deck, rx * 0.46, ry * 0.46), (deck + deck_h, rx * 0.40, ry * 0.40)), sides=8)
+    deck += deck_h
+    step_fore = rx * 0.26
+    step_hw = ry * 0.26
+    step_h = thick * uniform(0.34, 0.50)
+    for widen in (1.0, 0.76, 0.52):
+        _slab(bm, step_fore * widen, -step_fore * widen * 0.92, step_hw * widen, step_h,
+              deck + step_h, r=0.12, taper=0.90)
+        deck += step_h * 2.0
+        step_h *= 0.82
+    ch = step_h * 1.10
+    _canopy(bm, ((step_fore * 0.42, step_hw * 0.60, ch, deck + ch * 0.5, 0.35),
+                 (step_fore * 0.10, step_hw * 0.50, ch, deck + ch * 0.5, 0.35)))
+    block_aft = -rx * uniform(1.02, 1.10)
+    block_hw = ry * uniform(0.40, 0.52)
+    _slab(bm, -rx * 0.66, block_aft, block_hw, thick * 0.36, 0.0, r=0.3)
+    _engine_row(bm, block_aft, 0.0, 4, thick * 0.30, block_hw * 0.70)
+
+def _build_spine(bm, span_scale, round_bias, layout):
     # Mixed tanks and cargo modules on struts off an exposed boom.
+    if layout == 'compact':
+        return _spine_compact(bm, span_scale, round_bias)
+    if layout == 'split':
+        return _spine_split(bm, span_scale, round_bias)
+    if layout == 'stacked':
+        return _spine_stacked(bm, span_scale, round_bias)
     length = uniform(3.0, 4.6)
     nose, stern = length * 0.5, -length * 0.5
     r = _round_of(0.3, round_bias)
@@ -615,8 +1043,99 @@ def _build_spine(bm, span_scale, round_bias):
     spread = w * 0.45
     _engine_row(bm, stern, 0.0, count, min(w * 0.5, spread * 0.95), spread)
 
-def _build_pod(bm, span_scale, round_bias):
+def _spine_compact(bm, span_scale, round_bias):
+    # A short thick core with a tight cluster of modules pressed against it.
+    length = uniform(2.4, 3.0)
+    nose, stern = length * 0.5, -length * 0.5
+    r = _round_of(0.4, round_bias)
+    w = length * uniform(0.10, 0.14) * (0.85 + 0.30 * span_scale)
+    h = w * uniform(0.85, 1.15)
+    _loft(bm, (
+        (nose, w * 0.50, h * 0.55, h * 0.10, r),
+        (nose - length * 0.06, w, h, 0.0, r),
+        (stern + length * 0.16, w * 0.95, h * 0.95, 0.0, r),
+        (stern, w * 0.68, h * 0.68, 0.0, r),
+    ))
+    tower_h = h * uniform(0.35, 0.50)
+    _bridge(bm, nose - length * 0.10, nose - length * 0.22, w * 0.60, tower_h, h + tower_h, r,
+            glass=0.60)
+    for i in range(randint(2, 3)):
+        module_x = nose - length * (0.26 + 0.16 * i)
+        module_w = w * uniform(0.50, 0.75)
+        module_h = module_w * uniform(0.70, 1.10)
+        module_y = w + module_w * 0.80
+        for side in (1.0, -1.0):
+            _slab(bm, module_x + module_w * 0.90, module_x - module_w * 0.90, module_w, module_h,
+                  0.0, shift=side * module_y, r=0.2, taper=0.88)
+    tank_fore = nose - length * 0.30
+    _loft(bm, ((tank_fore, w * 0.50, h * 0.40, h * 1.10, 1.0),
+               (tank_fore - length * 0.14, w * 0.62, h * 0.50, h * 1.20, 1.0),
+               (tank_fore - length * 0.28, w * 0.44, h * 0.36, h * 1.05, 1.0)))
+    _engine_row(bm, stern, 0.0, randint(2, 3), min(w * 0.50, h * 0.45), w * 0.50)
+
+def _spine_split(bm, span_scale, round_bias):
+    # Two structural rails carrying modules, bound by crossbeams and a bow pod.
+    length = uniform(3.4, 4.4)
+    nose, stern = length * 0.5, -length * 0.5
+    r = _round_of(0.25, round_bias)
+    w = length * uniform(0.035, 0.055)
+    h = w * uniform(0.90, 1.20)
+    offset = w * uniform(2.6, 3.6) * (0.8 + 0.4 * span_scale)
+    for side in (1.0, -1.0):
+        _loft(bm, ((nose - length * 0.14, w * 0.70, h * 0.70, 0.0, r),
+                   (nose - length * 0.26, w, h, 0.0, r),
+                   (stern, w * 0.90, h * 0.90, 0.0, r)), shift=side * offset)
+    _loft(bm, ((nose, w * 0.50, h * 0.50, h * 0.05, r),
+               (nose - length * 0.04, w * 1.10, h * 1.00, 0.0, r),
+               (nose - length * 0.16, w * 1.05, h * 0.90, 0.0, r)))
+    ch = h * uniform(0.40, 0.60)
+    _canopy(bm, ((nose - length * 0.05, w * 0.72, ch, h * 0.95 + ch * 0.5, 0.3),
+                 (nose - length * 0.13, w * 0.62, ch * 0.9, h * 0.95 + ch * 0.5, 0.3)))
+    for i in range(randint(2, 3)):
+        module_x = nose - length * (0.28 + 0.18 * i)
+        module_w = w * uniform(0.55, 0.80)
+        module_h = module_w * uniform(0.90, 1.40)
+        module_l = length * uniform(0.06, 0.10)
+        for side in (1.0, -1.0):
+            _slab(bm, module_x + module_l, module_x - module_l, module_w, module_h, 0.0,
+                  shift=side * offset, r=0.08, taper=0.92)
+    for x in (nose - length * 0.14, nose - length * 0.44, stern + length * 0.06):
+        _slab(bm, x + length * 0.015, x - length * 0.015, offset + w * 0.90, h * 0.40, 0.0,
+              r=0.2, taper=0.95)
+    _engine_row(bm, stern, 0.0, 2, min(w * 0.70, h * 0.60), offset)
+
+def _spine_stacked(bm, span_scale, round_bias):
+    # One boom with modules hung above and below it, the bridge high at the bow.
+    length = uniform(3.2, 4.2)
+    nose, stern = length * 0.5, -length * 0.5
+    r = _round_of(0.3, round_bias)
+    w = length * uniform(0.045, 0.065)
+    h = w * uniform(0.85, 1.10)
+    _loft(bm, ((nose, w * 0.55, h * 0.50, h * 0.08, r),
+               (nose - length * 0.05, w * 1.20, h * 1.10, 0.0, r),
+               (nose - length * 0.17, w * 0.95, h * 0.90, 0.0, r)))
+    tower_h = h * uniform(0.90, 1.30)
+    _bridge(bm, nose - length * 0.07, nose - length * 0.17, w * 0.80, tower_h, h * 0.90 + tower_h,
+            r, glass=0.55)
+    _slab(bm, nose - length * 0.16, stern, w * 0.42, h * 0.42, 0.0, r=r, taper=0.88)
+    for i in range(randint(2, 3)):
+        module_x = nose - length * (0.30 + 0.17 * i)
+        module_w = w * uniform(0.80, 1.20)
+        module_h = module_w * uniform(0.90, 1.40)
+        module_l = length * uniform(0.07, 0.11)
+        above = i % 2 == 0
+        _slab(bm, module_x + module_l, module_x - module_l, module_w, module_h,
+              (h * 0.35 + module_h) if above else -(h * 0.35 + module_h), r=0.1, taper=0.90)
+    _engine_row(bm, stern, 0.0, randint(2, 3), min(h * 0.55, w * 0.80), w * 0.50)
+
+def _build_pod(bm, span_scale, round_bias, layout):
     # A raised command section and ribbed nacelles on straight or swept wings.
+    if layout == 'compact':
+        return _pod_compact(bm, span_scale, round_bias)
+    if layout == 'split':
+        return _pod_split(bm, span_scale, round_bias)
+    if layout == 'stacked':
+        return _pod_stacked(bm, span_scale, round_bias)
     beam = 0.8 + 0.4 * span_scale
     long_body = randint(0, 1)
     if long_body:
@@ -701,11 +1220,100 @@ def _build_pod(bm, span_scale, round_bias):
     for side in (1.0, -1.0):
         _engine_bell(bm, nac_aft, side * offset, nac_z, pod_r * 0.8)
 
+def _pod_compact(bm, span_scale, round_bias):
+    # One fat tug: a single dominant body, no pods afloat beside it.
+    length = uniform(2.3, 2.9)
+    w = length * uniform(0.20, 0.26) * (0.8 + 0.4 * span_scale)
+    h = w * uniform(0.82, 1.15)
+    r = _round_of(0.9, round_bias)
+    nose, stern = length * 0.5, -length * 0.5
+    _loft(bm, (
+        (nose, w * 0.30, h * 0.32, h * 0.10, r),
+        (nose - length * 0.12, w * 0.72, h * 0.70, h * 0.06, r),
+        (nose - length * 0.34, w, h, 0.0, r),
+        (stern + length * 0.22, w * 0.92, h * 0.90, 0.0, r),
+        (stern, w * 0.58, h * 0.56, 0.0, r),
+    ))
+    tower_fore = nose - length * uniform(0.20, 0.28)
+    tower_h = h * uniform(0.34, 0.50)
+    _bridge(bm, tower_fore, tower_fore - length * uniform(0.14, 0.20), w * uniform(0.42, 0.55),
+            tower_h, h * 0.85 + tower_h, r, glass=0.62)
+    _slab(bm, nose - length * 0.16, stern + length * 0.10, w * uniform(0.45, 0.60), h * 0.22,
+          -h * 0.95, r=0.25, taper=0.90)
+    for side in (1.0, -1.0):
+        _slab(bm, nose - length * 0.30, stern + length * 0.16, w * 0.22, h * 0.30, -h * 0.15,
+              shift=side * w * 0.92, r=0.3, taper=0.85)
+    _engine_row(bm, stern, 0.0, randint(1, 2), h * 0.30, w * 0.36)
+
+def _pod_split(bm, span_scale, round_bias):
+    # Two full bodies either side of a command pod, bridged by beams and a wing.
+    length = uniform(2.8, 3.6)
+    w = length * uniform(0.085, 0.115) * (0.8 + 0.4 * span_scale)
+    h = w * uniform(0.85, 1.10)
+    r = _round_of(0.8, round_bias)
+    offset = w * uniform(2.1, 2.8)
+    nose, stern = length * 0.5, -length * 0.5
+    for side in (1.0, -1.0):
+        _loft(bm, (
+            (nose, w * 0.45, h * 0.45, h * 0.08, r),
+            (nose - length * 0.16, w * 0.92, h * 0.90, 0.0, r),
+            (stern + length * 0.20, w, h, 0.0, r),
+            (stern, w * 0.68, h * 0.68, 0.0, r),
+        ), shift=side * offset)
+    cmd_w = w * 0.85
+    _loft(bm, ((nose, cmd_w * 0.45, h * 0.42, h * 0.08, r),
+               (nose - length * 0.14, cmd_w, h * 0.85, 0.0, r),
+               (nose - length * 0.26, cmd_w * 0.90, h * 0.72, 0.0, r)))
+    ch = h * uniform(0.28, 0.40)
+    _canopy(bm, ((nose - length * 0.10, cmd_w * 0.48, ch, h * 0.85 + ch * 0.4, 0.4),
+                 (nose - length * 0.19, cmd_w * 0.42, ch * 0.9, h * 0.85 + ch * 0.4, 0.4)))
+    for x in (nose - length * 0.18, stern + length * 0.30):
+        _slab(bm, x + length * 0.02, x - length * 0.02, offset + w * 0.80, h * 0.34, 0.0,
+              r=0.2, taper=0.95)
+    span = offset + w * 1.20
+    _wings(bm, w * 0.80, span - w * 0.80, length * uniform(0.20, 0.28),
+           length * uniform(0.10, 0.15), stern + length * uniform(0.22, 0.34),
+           length * uniform(0.02, 0.10), 0.0, span * uniform(0.0, 0.08),
+           length * uniform(0.008, 0.012))
+    for side in (1.0, -1.0):
+        _engine_bell(bm, stern, side * offset, 0.0, w * 0.72)
+
+def _pod_stacked(bm, span_scale, round_bias):
+    # A long heavy lower hull under a shorter upper one, the bridge on the upper.
+    length = uniform(2.9, 3.7)
+    w = length * uniform(0.10, 0.14) * (0.8 + 0.4 * span_scale)
+    h = w * uniform(0.55, 0.75)
+    r = _round_of(0.8, round_bias)
+    nose, stern = length * 0.5, -length * 0.5
+    lower = -h * 1.15
+    _loft(bm, (
+        (nose - length * 0.08, w * 0.50, h * 0.60, lower, r),
+        (nose - length * 0.26, w, h, lower, r),
+        (stern + length * 0.26, w * 0.96, h * 0.94, lower, r),
+        (stern, w * 0.62, h * 0.60, lower, r),
+    ))
+    upper = h * 1.05
+    upper_aft = nose - length * uniform(0.36, 0.46)
+    _loft(bm, ((nose, w * 0.45, h * 0.50, upper, r),
+               (nose - length * 0.10, w * 0.85, h * 0.85, upper, r),
+               (upper_aft, w * 0.78, h * 0.78, upper, r)))
+    _slab(bm, nose - length * 0.10, upper_aft + length * 0.04, w * 0.34, h * 1.20, 0.0,
+          r=0.25, taper=0.85)
+    ch = h * uniform(0.30, 0.45)
+    _canopy(bm, ((nose - length * 0.08, w * 0.55, ch, upper + h * 0.85 + ch * 0.4, 0.4),
+                 (nose - length * 0.18, w * 0.50, ch * 0.9, upper + h * 0.85 + ch * 0.4, 0.4)))
+    pylon_fore = upper_aft + length * 0.05
+    for side in (1.0, -1.0):
+        _slab(bm, pylon_fore, pylon_fore - length * 0.08, w * 0.16, h * 1.05, -h * 0.10,
+              shift=side * w * 0.55, r=0.2, taper=0.85)
+    _engine_row(bm, stern, lower, 2, h * 0.42, w * 0.42)
+
 _BUILDERS = {'wedge': _build_wedge, 'fighter': _build_fighter, 'freighter': _build_freighter,
              'saucer': _build_saucer, 'spine': _build_spine, 'pod': _build_pod}
 
-def _build_archetype(bm, archetype, wing_span, fuselage_roundness):
-    _BUILDERS[archetype](bm, min(max(wing_span, 0.0), 1.0), min(max(fuselage_roundness, 0.0), 1.0))
+def _build_archetype(bm, archetype, wing_span, fuselage_roundness, layout):
+    _BUILDERS[archetype](bm, min(max(wing_span, 0.0), 1.0), min(max(fuselage_roundness, 0.0), 1.0),
+                         layout)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
 
 # Given a face, splits it into a uniform grid and extrudes each grid face
@@ -757,15 +1365,16 @@ def add_grid_to_face(bm, face, depth=(0.025, 0.15), cuts=None, fractal=0.02):
                                     use_single_edge=False)
     grid_length = uniform(*depth)
     scale = 0.8
-    for face in result['geom']:
-        if isinstance(face, bmesh.types.BMFace):
+    # `geom` also contains neighbouring faces whose shared edges were split.
+    for grid_face in (face, *result['geom_inner']):
+        if isinstance(grid_face, bmesh.types.BMFace) and grid_face.is_valid:
             material_index = Material.hull_lights if random() > 0.5 else Material.hull
             extruded_face_list = []
-            face = extrude_face(bm, face, grid_length, extruded_face_list)
+            grid_face = extrude_face(bm, grid_face, grid_length, extruded_face_list)
             for extruded_face in extruded_face_list:
-                if abs(face.normal.z) < 0.707: # side face
+                if abs(grid_face.normal.z) < 0.707: # side face
                     extruded_face.material_index = material_index
-            scale_face(bm, face, scale, scale, scale)
+            scale_face(bm, grid_face, scale, scale, scale)
 
 # Given a face, adds some cylinders along it in a grid pattern.
 def add_cylinders_to_face(bm, face, max_segments=32):
@@ -986,6 +1595,7 @@ class Material(IntEnum):
     hull_dark = 2       # Plain Spaceship hull, darkened
     exhaust_burn = 3    # Emissive engine burn material
     glow_disc = 4       # Emissive landing pad disc material
+    glass = 5           # Cockpit glazing: dark, smooth, opaque, never lit from inside
 
 
 # Returns shader node
@@ -1103,6 +1713,15 @@ def create_materials():
     shader_node.inputs["Emission Color"].default_value = glow_color
     shader_node.inputs["Emission Strength"].default_value = 1.0
 
+    # Build the glass canopy: dark and reflective, with no light of its own
+    mat = ret[Material.glass]
+    shader_node = getShaderNode(mat)
+    shader_node.inputs["Base Color"].default_value = (0.018, 0.026, 0.040, 1.0)
+    shader_node.inputs["Roughness"].default_value = 0.12
+    shader_node.inputs["Metallic"].default_value = 0.30
+    shader_node.inputs["Specular IOR Level"].default_value = 0.9
+    shader_node.inputs["Emission Strength"].default_value = 0.0
+
     return ret
 
 # Generates a textured spaceship mesh and returns the object.
@@ -1113,6 +1732,10 @@ def create_materials():
 # Archetypes use one primary form, attached secondary forms and sparse surface detail.
 #
 #   archetype                      wedge, fighter, freighter, saucer, spine, pod, or classic
+#   layout                         how that archetype's forms are arranged: balanced (the form
+#                                  above), compact (one tight solid form), split (two forms either
+#                                  side of the centre line) or stacked (forms tiered over each
+#                                  other). Classic leaves this alone.
 #   wing_span                      spread of wings, pods or beam: 0 narrow, 1 wide
 #   fuselage_roundness             bias towards round sections (saucer: thickness), 0..1
 #   taper                          front-half scale: 0 wider, 0.5 neutral, 1 narrower
@@ -1140,7 +1763,7 @@ def create_materials():
 #   horizontal_symmetry_chance      ...this often (1 always)
 #   allow_vertical_symmetry, vertical_symmetry_chance   the same, top to bottom
 #   apply_bevel_modifier            add the broad bevel modifier
-#   assign_materials                build the textured materials; otherwise five empty slots
+#   assign_materials                build the textured hull materials and opaque glass; otherwise six empty slots
 def generate_spaceship(random_seed='',
                        num_hull_segments_min=3,
                        num_hull_segments_max=6,
@@ -1179,12 +1802,15 @@ def generate_spaceship(random_seed='',
                        archetype='wedge',
                        wing_span=0.5,
                        fuselage_roundness=0.5,
+                       layout='balanced',
                        taper=0.5):
     if random_seed:
         seed(random_seed)
     max_round_segments = max(3, int(max_round_segments))
     if archetype not in ARCHETYPES:
         raise ValueError("Unknown archetype: " + archetype)
+    if layout not in LAYOUTS:
+        raise ValueError("Unknown layout: " + layout)
 
     bm = bmesh.new()
     if archetype == 'classic':
@@ -1193,7 +1819,7 @@ def generate_spaceship(random_seed='',
             (uniform(*hull_scale_x), uniform(*hull_scale_y), uniform(*hull_scale_z)))
         bmesh.ops.scale(bm, vec=scale_vector, verts=bm.verts)
     else:
-        _build_archetype(bm, archetype, wing_span, fuselage_roundness)
+        _build_archetype(bm, archetype, wing_span, fuselage_roundness, layout)
         front = max(v.co.x for v in bm.verts)
         back = min(v.co.x for v in bm.verts)
         for vert in bm.verts:
@@ -1440,7 +2066,7 @@ def generate_spaceship(random_seed='',
         bevel_modifier.profile = 0.25 if archetype == 'classic' else 0.5
         bevel_modifier.limit_method = 'NONE' if archetype == 'classic' else 'ANGLE'
 
-    # Add materials to the spaceship: the textured ones, or five empty slots that keep each face's material index
+    # Keep face-zone indices stable, with or without textured materials.
     me = ob.data
     if assign_materials:
         for mat in create_materials():

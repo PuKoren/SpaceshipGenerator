@@ -11,9 +11,10 @@ This is a fork of [Michael Davies's Spaceship Generator](https://github.com/a1st
 In the generator itself:
 
 * **Blender 4.2 to 5.x.** The API the original was written against is gone from current Blender; this runs on it as it is, add-on included.
-* **Bug fixes.** Equal minimum and maximum segment counts no longer raise; `assign_materials=False` no longer builds and loads the textured materials anyway; a darkened material colour keeps its alpha.
+* **Bug fixes.** Equal minimum and maximum segment counts no longer raise; `assign_materials=False` no longer builds and loads the textured materials anyway; a darkened material colour keeps its alpha. Grid dressing no longer extrudes adjacent hull faces over engine throats.
 * **Parameters for what was hard-coded** in `generate_spaceship()`: the hull's proportions, the length of a segment, how often an end face tapers, steps, tilts or is ribbed, how often a face grows an outgrowth, each kind of detail on or off, how deep a grid is cut, how thickly antennas stand, how many sides a round part has, how often the ship is mirrored. The comment above the function lists them all.
-* **Six silhouette-first archetypes:** `wedge` (the default), `fighter`, `freighter`, `saucer`, `spine`, `pod`. Seeds vary primary proportions, module layouts, wings and engine banks, not just surface noise. Explicit canopies and command sections, stepped bridges, plating rails, ribs and intakes sit between the main silhouette and sparse fine grids. Curved faces use angle-based smoothing. `wing_span`, `fuselage_roundness` and `taper` tune the forms. Every new archetype is bilaterally symmetric; vertical mirroring is optional.
+* **Six silhouette-first archetypes:** `wedge` (the default), `fighter`, `freighter`, `saucer`, `spine`, `pod`. Each now has `balanced`, `compact`, `split` and `stacked` layouts: single bodies, twin booms or lenses, different wing configurations and vertical cargo/command stacks. Seeds vary their proportions, modules, wings and engine banks. Explicit canopies and command sections, stepped bridges, plating rails, ribs and intakes sit between the main silhouette and sparse fine grids. Curved faces use angle-based smoothing. `wing_span`, `fuselage_roundness` and `taper` tune the forms. Every new archetype is bilaterally symmetric; vertical mirroring is optional.
+* **Opaque cockpit glass**, a separate face-zone/material slot with a dark tint and low roughness, never emission. Existing material indices 0–4 remain unchanged; glass is slot 5.
 * **The original extrusion route is `classic`**, with `nose_taper` and `min_slenderness` controls.
 * **Every ship with detail has an engine.** The original could leave one out: when no stern face was square enough to carry it, or when the only one stood on the half the mirror discarded.
 * The movie renderer and other unused code are gone.
@@ -24,11 +25,11 @@ In the generator itself:
 
 ![Six archetypes, each with four different seeds](docs/images/archetypes.webp)
 
-Rows: wedge, fighter, freighter, saucer, spine, pod. Columns: seeds `galaxy-1` through `galaxy-4`, neutral form controls. These are the generator's meshes in **Galaxy's real-time layered shader**, not the add-on's material. One primary form, a few secondary forms, then small detail. The inspiration is silhouette hierarchy — arrowheads, paired nacelles, discs — not copied franchise models.
+Rows: wedge, fighter, freighter, saucer, spine, pod. Columns: four consecutive seeds, `galaxy-1` through `galaxy-4`. Galaxy's wrapper has randomisation on: unset controls, including the layout, are drawn deterministically from archetype-specific ranges; paint and weather are held fixed here to make shape differences readable. These are the generator's meshes in **Galaxy's real-time layered shader**, not the add-on's material. The inspiration is silhouette hierarchy — arrowheads, paired nacelles, discs — not copied franchise models.
 
-![The previous six shipped hulls above and their archetype replacements below](docs/images/archetype-before-after.webp)
+![Before and after the six shipped hulls, at equal length and at their actual game scale](docs/images/archetype-before-after.webp)
 
-Top two rows: Galaxy's previous generated fleet. Bottom two rows: the rerolled fleet — starter/pod, miner/spine, hauler/freighter, frigate/fighter, destroyer/wedge, cruiser/wedge. Both use Galaxy's layered material. The new hero/fleet pairs total 653 kB, versus 1.30 MB before; all stay below 4,000/1,200 triangles, one draw call per hull.
+Rows 1–2: before and after at equal length. Rows 3–4: before and after on the same camera at game scale (25, 30, 40, 35, 60 and 90 metres). Starter is a compact pod; miner a spine; hauler a stacked freighter; frigate a fighter; destroyer a narrow dagger wedge; cruiser a broad stacked saucer with a tall bridge and four drives. Both use Galaxy's layered material. The new hero/fleet pairs total 524 kB, versus 653 kB before this pass; all stay below 4,000/1,200 triangles, one draw call per hull.
 
 ### What the parameters do
 
@@ -36,9 +37,11 @@ Top two rows: Galaxy's previous generated fleet. Bottom two rows: the rerolled f
 
 Historical `classic` parameter sweep: three seeds, one per column; original defaults, `nose_taper=0.7`, `min_slenderness=4`, `horizontal_symmetry_chance=1`, `create_asymmetry_segments=False`, `asymmetry_chance=0.45`. The fourth row matches the first because these three seeds were already mirrored. The labels are Galaxy's parameter and class names. These are Blender renders in Galaxy's flat paint, not the add-on's materials.
 
+The randomisation policy lives in Galaxy's `genhull-params.json` and `genhull.py`, not this add-on. An explicit control always wins, including a value equal to its ordinary default. Galaxy writes the complete drawn recipe into `entry.json.params`, so its workshop can reproduce it with the same seed.
+
 ### In Galaxy
 
-The layered pictures are not what this add-on renders. They are the generator's meshes drawn in Galaxy's real-time shader (three.js, WebGL2); paint, chips, rust and dirt belong to that shader. It reads masks Galaxy bakes onto the mesh — sharp-edge distances, shelter and face zones. **`art/blender/skin.py` lives in Galaxy, not this repository.** This fork supplies the shape.
+The layered pictures are not what this add-on renders. They are the generator's meshes drawn in Galaxy's real-time shader (three.js, WebGL2); paint, chips, rust, dirt and the glass's Fresnel sky reflection belong to that shader. It reads masks Galaxy bakes onto the mesh — sharp-edge distances, shelter and face zones. **`art/blender/skin.py` lives in Galaxy, not this repository.** This fork supplies the shape and face-zone indices; Galaxy draws them as one opaque material without emissive windows.
 
 ![Six generated hulls, twice: in flat paint above, in layered paint with chipped edges and rust below](docs/images/galaxy-before-after.webp)
 
@@ -56,6 +59,7 @@ Usage
 * Under Edit > Preferences... > Add-ons enable the "Add Mesh: Spaceship Generator" script (search for "spaceship")
 * Add a spaceship in the 3D View under Add > Mesh > Spaceship
 * Expand the Spaceship tab that appears in the bottom left of the viewport to adjust procedural generation settings
+* Geometry regression: `blender --background --python-exit-code 1 --python tests/test_geometry.py`.
 
 How it works
 ------------
